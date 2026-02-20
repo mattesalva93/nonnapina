@@ -748,6 +748,147 @@ keepa_tracker/
 
 ## 🔐 Sicurezza
 
+---
+
+## 📝 File di Output Generati
+
+### 1. **File Excel** (`output/tracker_outcome.xlsx`)
+
+Spreadsheet con i dati di tutte le offerte estratte, organizzato in fogli per data:
+
+- **Colonne**: ASIN, Titolo, Categoria, Prezzo Originale, Prezzo Scontato, Sconto%, Rating, Numero Review, Link Affiliazione, Immagini, etc.
+- **Fogli**: Uno per ogni data (formato `DD-MM-YYYY`)
+- **Header giallo**: Prima riga con i titoli colonna
+- **Aggiornamento**: I nuovi prodotti si aggiungono automaticamente
+
+**Uso**: Tracking storico delle offerte, analisi sconti, reporting
+
+---
+
+### 2. **File JSON** (`output/products-complete.json`)
+
+Dati completi in formato JSON con tutte le informazioni per ogni prodotto:
+
+- **Struttura**: Array di oggetti prodotto
+- **Campi**: ASIN, titolo, prezzi, rating, categoria, link di affiliazione (web, mobile iOS/Android, storefront smart link), immagini, dati grezzi API
+
+**Uso**: Integrazione con altri sistemi, automazione, API custom
+
+---
+
+### 3. **File di Note** (`Desktop/nonnapina_DD-MM-YYYY.txt`)
+
+**🆕 Nuovo!** File di testo formattato per social media, salvato direttamente sul Desktop.
+
+Caratteristiche:
+
+- 📁 **Posizione**: Desktop (facile accesso)
+- 📋 **Organizzazione**: Prodotti raggruppati per categoria
+- 🎨 **Formato**: Pronto per copiare-incollare su:
+  - 📱 Instagram (caption)
+  - 💬 Telegram (messaggi)
+  - 📲 WhatsApp
+  - 🐦 Twitter/X
+
+**Contenuto per ogni prodotto**:
+
+```
+━━━━━ CATEGORIA ━━━━━
+
+🖼️ IMMAGINE: [URL immagine grande da scaricare]
+
+💬 [Titolo prodotto]
+💰 A soli XX€ invece di YY€ (-Z%)
+
+🔗 [Smart Link Affiliazione Amazon]
+⭐ [N] Recensioni: X.X / 5.0
+🚚 Venduto e spedito da Amazon
+```
+
+**Apertura automatica**: Il file si apre automaticamente con TextEdit dopo l'estrazione.
+
+---
+
+## 🚀 Launcher App - Eseguire il Processo da Mac
+
+### Creazione del Launcher (Una volta sola)
+
+Per eseguire il Keepa Tracker con un semplice doppio click dal Desktop, crea l'applicazione launcher:
+
+```bash
+# Dalla cartella del progetto
+./create-launcher.sh
+```
+
+Questo script crea:
+
+- 📦 **Keepa Tracker.app** sul Desktop
+- 🎨 **Icona personalizzata** (dalla cartella `assets/icdnp_icon.png`)
+- ⚙️ **Script launcher** che apre il Terminale e avvia il processo
+
+### Uso del Launcher
+
+#### Metodo 1: Desktop
+
+1. Vai sul **Desktop**
+2. Doppio click su **"Keepa Tracker.app"**
+3. ✅ Si apre un Terminale e parte il processo
+
+#### Metodo 2: Dock
+
+1. Apri il Finder
+2. Vai al Desktop
+3. Trascinare **"Keepa Tracker.app"** nel Dock
+4. Ora puoi lanciare il processo clicco nel Dock
+
+#### Metodo 3: Spotlight
+
+1. Premi **Cmd + Spazio** (Spotlight)
+2. Digita "Keepa Tracker"
+3. Premi Enter
+4. ✅ Parte il processo
+
+### Personalizzare l'Icona
+
+#### Opzione 1: Icona dalla tua immagine (consigliato)
+
+1. Prepara un file immagine (PNG, JPG, qualsiasi formato)
+2. Salvalo come `AppIcon.icns` in `assets/AppIcon.icns`
+3. Esegui di nuovo: `./create-launcher.sh`
+4. ✨ La nuova app avrà l'icona personalizzata
+
+#### Opzione 2: Cambia l'icona direttamente
+
+1. Fai **right-click** su "Keepa Tracker.app"
+2. Seleziona **"Get Info"**
+3. Clicca sull'**icona piccola in alto a sinistra**
+4. Copia l'immagine che vuoi (Cmd+C)
+5. Incolla (Cmd+V)
+6. 🎨 L'icona cambia subito!
+
+#### Opzione 3: Conversione professionale
+
+Se vuoi un file `.icns` professionale:
+
+1. Prepara un'immagine PNG/JPG (consigliato almeno 1024x1024px)
+2. Converti con: [https://cloudconvert.com/png-to-icns](https://cloudconvert.com/png-to-icns)
+3. Scarica il file `.icns`
+4. Seguire Opzione 1
+
+### Ricreazione del Launcher
+
+Se cambi l'icona o il nome, ricrea l'app:
+
+```bash
+# Rimuovi la vecchia app
+rm -rf ~/Desktop/Keepa\ Tracker.app
+
+# Crea la nuova
+./create-launcher.sh
+```
+
+---
+
 ### ⚠️ Importante: NON committare il file `.env`!
 
 Il file `.env` contiene credenziali sensibili. **Mai** condividerlo pubblicamente o committarlo su Git.
