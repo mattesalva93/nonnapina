@@ -8,6 +8,8 @@ export const config = {
     secretKey: process.env.AMAZON_SECRET_KEY,
     partnerTag: process.env.AMAZON_PARTNER_TAG,
     marketplace: process.env.AMAZON_MARKETPLACE || 'IT',
+    // Link generation options
+    storefrontId: process.env.AMAZON_STOREFRONT_ID || null, // Optional: Your storefront ID for storefront links
   },
 
   keepa: {
@@ -18,6 +20,14 @@ export const config = {
 
   output: {
     filePath: process.env.OUTPUT_FILE || './output/deals.json',
+    productsFilePath: process.env.PRODUCTS_OUTPUT_FILE || './output/products-complete.json',
+  },
+
+  linkGeneration: {
+    // If true, generates iOS/Android deep links for app
+    includeDeepLinks: process.env.INCLUDE_DEEP_LINKS !== 'false',
+    // If true, generates storefront links (requires AMAZON_STOREFRONT_ID)
+    includeStorefrontLinks: process.env.INCLUDE_STOREFRONT_LINKS === 'true',
   },
 };
 

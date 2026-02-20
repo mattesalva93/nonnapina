@@ -7,17 +7,17 @@ import fs from 'fs/promises';
 import path from 'path';
 
 /**
- * Main execution flow - TEST MODE (Keepa only)
+ * Main execution flow - Keepa deals scraper and Amazon product fetching
  */
 async function main() {
-  console.log('🎬 Starting Keepa Tracker (TEST MODE - Keepa Only)...\n');
+  console.log('🎬 Starting Keepa Tracker...\n');
   console.log('═'.repeat(50));
 
   try {
     // Step 1: Validate configuration
     console.log('\n📋 Step 1: Validating configuration...');
-    // validateConfig(); // TODO: Enable when Amazon PA-API credentials are ready
-    console.log('✅ Configuration loaded (Amazon credentials validation disabled for testing)');
+    validateConfig();
+    console.log('✅ Configuration validated successfully');
 
     // Step 2: Scrape Keepa for ASINs
     console.log('\n📋 Step 2: Scraping Keepa deals...');
@@ -49,15 +49,20 @@ async function main() {
 
     // Step 4: Save to JSON file
     console.log('\n📋 Step 4: Saving to file...');
-    await saveASINsToJSON(asinsByCategory, './output/asins-test.json');
+    await saveASINsToJSON(asinsByCategory, config.output.filePath);
 
     // Summary
     console.log('\n' + '═'.repeat(50));
-    console.log('🎉 Test completed successfully!');
+    console.log('🎉 Keepa scraping completed successfully!');
     console.log(`📊 Total products: ${keepaProducts.length}`);
-    console.log(`📁 Output file: ./output/asins-test.json`);
-    console.log('\n✨ Ready for Amazon PA-API integration when credentials are available');
-    console.log('═'.repeat(50) + '\n');
+    console.log(`📁 Output file: ${config.output.filePath}`);
+    console.log('═'.repeat(50));
+
+    // Next steps
+    console.log('\n📋 Next Steps:');
+    console.log('1. Run "npm run fetch-products" to fetch product details from Amazon');
+    console.log('2. This will generate a complete JSON with affiliate links and product info');
+    console.log('3. You can then filter and process the data as needed\n');
   } catch (error) {
     console.error('\n❌ Fatal error:', error.message);
     console.error(error.stack);

@@ -7,20 +7,6 @@ import { config } from '../config/index.js';
  */
 class AmazonService {
   constructor() {
-    // Debug: Log credentials (first chars only for security)
-    console.log('\n🔐 Checking Amazon Creators API credentials...');
-    console.log(
-      '   Client ID:',
-      config.amazon.accessKey ? `${config.amazon.accessKey.substring(0, 5)}...` : 'NOT SET ❌'
-    );
-    console.log(
-      '   Client Secret:',
-      config.amazon.secretKey ? `${config.amazon.secretKey.substring(0, 5)}...` : 'NOT SET ❌'
-    );
-    console.log('   Partner Tag:', config.amazon.partnerTag || 'NOT SET ❌');
-    console.log('   Marketplace:', config.amazon.marketplace || 'NOT SET ❌');
-    console.log('   Using Creators API with OAuth 2.0\n');
-
     this.clientId = config.amazon.accessKey;
     this.clientSecret = config.amazon.secretKey;
     this.partnerTag = config.amazon.partnerTag;
@@ -45,12 +31,7 @@ class AmazonService {
     }
 
     try {
-      console.log('🔐 Fetching OAuth 2.0 access token...');
-
       const credentials = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
-
-      console.log('   📨 Token endpoint:', this.tokenEndpoint);
-      console.log('   🔑 Client ID (first 10 chars):', this.clientId.substring(0, 10) + '...');
 
       const response = await axios.post(
         this.tokenEndpoint,
@@ -72,7 +53,6 @@ class AmazonService {
       // Set expiry to 55 minutes (token lasts 60, refresh 5 min before)
       this.tokenExpiry = Date.now() + response.data.expires_in * 1000 - 300000;
 
-      console.log('✅ Access token obtained (expires in', response.data.expires_in, 'seconds)');
       return this.accessToken;
     } catch (error) {
       console.error('❌ Failed to get access token:', error.message);
@@ -86,9 +66,12 @@ class AmazonService {
   /**
    * Fetch product details for multiple ASINs via Creators API
    * @param {string[]} asins - Array of ASINs
+   * @param {Object} options - Link generation options
+   * @param {boolean} options.mobileApp - Open mobile app instead of browser
+   * @param {string} options.storefront - Your storefront ID
    * @returns {Promise<Array>}
    */
-  async getProductDetails(asins) {
+  async getProductDetails(asins, options = {}) {
     console.log(`\n🔍 Fetching details for ${asins.length} products from Amazon Creators API...`);
 
     const BATCH_SIZE = 10; // Creators API batch size
@@ -100,7 +83,7 @@ class AmazonService {
       console.log(`📦 Processing batch ${i + 1}/${batches.length} (${batch.length} items)`);
 
       try {
-        const products = await this.fetchProductBatch(batch);
+        const products = await this.fetchProductBatch(batch, options);
         allProducts.push(...products);
         console.log(`✅ Fetched ${products.length} items`);
 
@@ -121,7 +104,7 @@ class AmazonService {
   /**
    * Fetch a batch of products from Creators API (catalog/v1/getItems)
    */
-  async fetchProductBatch(asins) {
+  async fetchProductBatch(asins, options = {}) {
     try {
       // Get fresh access token
       const accessToken = await this.getAccessToken();
@@ -145,13 +128,6 @@ class AmazonService {
         ],
       };
 
-      console.log('📤 Sending request:');
-      console.log('   Endpoint:', `${this.apiBaseUrl}/catalog/v1/getItems`);
-      console.log('   Marketplace URL:', this.getMarketplaceUrl());
-      console.log('   Partner Tag:', this.partnerTag);
-      console.log('   Items count:', asins.length);
-      console.log('   Token (first 20 chars):', accessToken.substring(0, 20) + '...');
-
       const response = await axios.post(`${this.apiBaseUrl}/catalog/v1/getItems`, payload, {
         headers: {
           'Content-Type': 'application/json',
@@ -161,9 +137,9 @@ class AmazonService {
         timeout: 10000,
       });
 
-      // Map response to expected format
+      // Map response to expected format with options
       if (response.data?.itemsResult?.items) {
-        return response.data.itemsResult.items.map(product => this.formatProduct(product));
+        return response.data.itemsResult.items.map(product => this.formatProduct(product, options));
       }
 
       return [];
@@ -195,15 +171,24 @@ class AmazonService {
   }
 
   /**
-   * Format product data from Creators API response
+   * Format product data from Creators API response (COMPLETE with all API data)
    */
-  formatProduct(product) {
-    // Extract pricing from offersV2 if available, otherwise null
+  formatProduct(product, options = {}) {
+    // Extract pricing from offersV2 if available
     let price = null;
     let currency = null;
-    if (product.offersV2?.listings?.[0]?.price) {
-      price = product.offersV2.listings[0].price.amount;
-      currency = product.offersV2.listings[0].price.currency;
+    let availability = null;
+
+    if (product.offersV2?.listings?.[0]) {
+      // Handle price structure: price.money.amount or price.amount
+      if (product.offersV2.listings[0].price) {
+        const priceStructure = product.offersV2.listings[0].price;
+        price = priceStructure.money?.amount || priceStructure.amount;
+        currency = priceStructure.money?.currency || priceStructure.currency;
+      }
+      if (product.offersV2.listings[0].availability) {
+        availability = product.offersV2.listings[0].availability;
+      }
     }
 
     // Extract rating if available
@@ -218,29 +203,152 @@ class AmazonService {
       ratingCount = product.customerReviews.count;
     }
 
+    // Generate affiliate links with all options
+    const affiliateLinks = this.buildAffiliateLink(product.asin, options);
+
+    // Return COMPLETE product object with all API data
     return {
+      // Basic Product Info
       asin: product.asin,
+      parentASIN: product.parentASIN || null,
       title: product.itemInfo?.title?.displayValue || 'N/A',
+
+      // Pricing and Availability
       price: price,
       currency: currency || 'EUR',
+      availability: availability || null,
+
+      // Customer Reviews
       rating: rating,
       ratingCount: ratingCount,
+
+      // Product Details
       features: product.itemInfo?.features?.displayValues || [],
-      image: product.images?.primary?.large?.url || product.images?.primary?.small?.url || null,
-      url: this.buildAffiliateLink(product.asin),
-      detailPageURL: product.detailPageURL || null,
-      parentASIN: product.parentASIN || null,
+
+      // Images
+      image: {
+        small: product.images?.primary?.small?.url || null,
+        large: product.images?.primary?.large?.url || null,
+      },
+
+      // Affiliate Links (All formats)
+      affiliateLinks: affiliateLinks,
+
+      // Raw API response (complete data for future filtering)
+      rawData: {
+        itemInfo: product.itemInfo || null,
+        images: product.images || null,
+        offersV2: product.offersV2 || null,
+        customerReviews: product.customerReviews || null,
+        detailPageURL: product.detailPageURL || null,
+      },
+
+      // Metadata
+      fetchedAt: new Date().toISOString(),
+      marketplace: config.amazon.marketplace,
     };
   }
 
   /**
-   * Build affiliate link from ASIN
-   * @param {string} asin
-   * @returns {string}
+   * Build affiliate link from ASIN with advanced options
+   * @param {string} asin - Product ASIN
+   * @param {Object} options - Link generation options
+   * @param {boolean} options.mobileApp - Open mobile app instead of browser (deep link)
+   * @param {string} options.storefront - Your storefront ID to show in storefront mode
+   * @param {string} options.ref - Custom reference tag for tracking
+   * @returns {Object} - Object with different link formats
    */
-  buildAffiliateLink(asin) {
+  buildAffiliateLink(asin, options = {}) {
     const marketplace = config.amazon.marketplace.toLowerCase();
-    return `https://www.amazon.${marketplace}/dp/${asin}?tag=${config.amazon.partnerTag}`;
+    const baseUrl = `https://www.amazon.${marketplace}`;
+    const partnerTag = config.amazon.partnerTag;
+
+    const links = {
+      // Standard affiliate link for desktop/web
+      web: this.buildWebLink(baseUrl, asin, partnerTag, options.ref),
+
+      // Mobile app deep link (iOS)
+      mobileAppIOS: this.buildIOSDeepLink(asin, partnerTag, options.storefront),
+
+      // Mobile app deep link (Android)
+      mobileAppAndroid: this.buildAndroidDeepLink(asin, partnerTag, options.storefront),
+
+      // Storefront link (if storefront ID provided)
+      storefront: options.storefront
+        ? this.buildStorefrontLink(baseUrl, asin, options.storefront, partnerTag)
+        : null,
+
+      // Smart link that detects device and opens app on mobile
+      smartLink: this.buildSmartLink(baseUrl, asin, partnerTag, options.storefront),
+    };
+
+    return links;
+  }
+
+  /**
+   * Build standard web affiliate link
+   */
+  buildWebLink(baseUrl, asin, partnerTag, ref = null) {
+    let url = `${baseUrl}/dp/${asin}?tag=${partnerTag}`;
+    if (ref) {
+      url += `&ref=${encodeURIComponent(ref)}`;
+    }
+    return url;
+  }
+
+  /**
+   * Build iOS deep link for Amazon app
+   * Deep links for Amazon app on iOS
+   */
+  buildIOSDeepLink(asin, partnerTag, storefrontId = null) {
+    // iOS deep link format for Amazon app
+    // amzn://musthave/B0DHRQ2XGJ - opens to product directly
+    if (storefrontId) {
+      // If storefront is provided, open storefront with this product highlighted
+      return `amazon://${storefrontId}?dp=${asin}&tag=${partnerTag}`;
+    }
+    return `amazon://musthave/${asin}?tag=${partnerTag}`;
+  }
+
+  /**
+   * Build Android deep link for Amazon app
+   */
+  buildAndroidDeepLink(asin, partnerTag, storefrontId = null) {
+    // Android deep link format for Amazon app
+    if (storefrontId) {
+      return `amzn://amazon.com/store/${storefrontId}?dp=${asin}&tag=${partnerTag}`;
+    }
+    return `amzn://amazon.com/gp/product/${asin}?tag=${partnerTag}`;
+  }
+
+  /**
+   * Build storefront link - redirect to your storefront with this product promoted
+   */
+  buildStorefrontLink(baseUrl, asin, storefrontId, partnerTag) {
+    // Storefront link format: Shows your store with this product as primary
+    // amazon.it/services/storefront?storefront_id=XXX&asins=B0DHRQ2XGJ
+    return `${baseUrl}/services/storefront?storefront_id=${storefrontId}&asins=${asin}&tag=${partnerTag}`;
+  }
+
+  /**
+   * Build smart link that detects device
+   * This returns a regular web link with JavaScript that detects mobile and redirects to app
+   */
+  buildSmartLink(baseUrl, asin, partnerTag, storefrontId = null) {
+    // The smart link is actually a web link with redirect logic
+    // It should be hosted on your server to detect device and redirect
+    // For now, return web link with a note that this needs server-side logic
+
+    const webLink = this.buildWebLink(baseUrl, asin, partnerTag, 'smart-link');
+    const deepLinkIOS = this.buildIOSDeepLink(asin, partnerTag, storefrontId);
+    const deepLinkAndroid = this.buildAndroidDeepLink(asin, partnerTag, storefrontId);
+
+    return {
+      url: webLink,
+      fallbackIOS: deepLinkIOS,
+      fallbackAndroid: deepLinkAndroid,
+      description: 'Use this with a redirect service that detects device and opens app on mobile',
+    };
   }
 
   /**

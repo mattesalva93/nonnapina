@@ -2,35 +2,6 @@ import fs from 'fs/promises';
 import path from 'path';
 
 /**
- * Transform Amazon PA-API response to output JSON format
- * @param {Object} amazonProduct - Product from Amazon PA-API
- * @param {string} category - Category from Keepa scraping
- * @param {string} affiliateLink - Pre-built affiliate link
- * @returns {Object}
- */
-export function transformProduct(amazonProduct, category, affiliateLink) {
-  const item = amazonProduct;
-
-  return {
-    name: item.ItemInfo?.Title?.DisplayValue || 'N/A',
-    asin: item.ASIN,
-    url: item.DetailPageURL || affiliateLink,
-    affiliate_link: affiliateLink,
-    img: item.Images?.Primary?.Large?.URL || item.Images?.Primary?.Medium?.URL || null,
-    description:
-      item.ItemInfo?.Features?.DisplayValues?.join(' ') ||
-      item.ItemInfo?.Title?.DisplayValue ||
-      'No description available',
-    post: '', // Campo custom da compilare manualmente o con AI
-    price:
-      item.Offers?.Listings?.[0]?.Price?.DisplayAmount ||
-      item.Offers?.Listings?.[0]?.Price?.Amount?.toString() ||
-      'N/A',
-    category: category || 'Unknown',
-  };
-}
-
-/**
  * Save products to JSON file
  * @param {Array} products - Array of transformed products
  * @param {string} filePath - Output file path
@@ -68,7 +39,7 @@ export async function loadFromJSON(filePath) {
 }
 
 /**
- * Save ASINs organized by category to JSON file (TEST MODE)
+ * Save ASINs organized by category to JSON file
  * @param {Object} asinsByCategory - Object with category names as keys and ASIN arrays as values
  * @param {string} filePath - Output file path
  */
