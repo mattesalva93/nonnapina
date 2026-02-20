@@ -175,8 +175,6 @@ cd /percorso/alla/cartella/keepa_tracker
 
 ```bash
 # Assicurati di essere nella cartella del progetto
-cd /Users/msalvalaggio/personal_prjt/keepa_tracker
-
 # Installa tutte le dipendenze npm
 npm install
 ```
