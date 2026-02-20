@@ -1,15 +1,22 @@
 import XLSX from 'xlsx';
 import fs from 'fs/promises';
 import path from 'path';
+import os from 'os';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 /**
  * Notes Generator - Create a single text file for Mac Notes app
  * Generates a formatted text file with all products from Excel data for social media posts
+ * Saves to Desktop for easy access
  */
 class NotesGenerator {
-  constructor(excelFilePath = './output/tracker_outcome.xlsx', outputDir = './output/notes') {
+  constructor(excelFilePath = './output/tracker_outcome.xlsx') {
     this.excelFilePath = excelFilePath;
-    this.outputDir = outputDir;
+    // Save to Desktop for easy user access
+    this.outputDir = path.join(os.homedir(), 'Desktop');
   }
 
   /**
@@ -145,24 +152,23 @@ class NotesGenerator {
   }
 
   /**
-   * Format product data into a Mac Notes compatible text
+   * Format product data into text for Mac Notes
    */
   formatProductForNote(product) {
-    // Build the text according to the screenshot format
     const lines = [];
 
-    // Line 0: 🖼️ + Image URL (for Instagram/social media)
+    // Image URL
     if (product.immagineLarge) {
       lines.push(`🖼️ IMMAGINE: ${product.immagineLarge}`);
       lines.push('');
     }
 
-    // Line 1: 💬 + Title
+    // Title
     if (product.titolo) {
       lines.push(`💬 ${product.titolo}`);
     }
 
-    // Line 2: 💰 + Price information
+    // Price information
     if (product.prezzoScontato && product.prezzoOriginale && product.percentualeSconto) {
       const prezzoScontato = this.formatPrice(product.prezzoScontato);
       const prezzoOriginale = this.formatPrice(product.prezzoOriginale);
@@ -176,18 +182,18 @@ class NotesGenerator {
     // Empty line
     lines.push('');
 
-    // Line 3: 🔗 + Smart Link URL
+    // Smart Link
     if (product.smartLinkURL) {
       lines.push(`🔗 ${product.smartLinkURL}`);
     }
 
-    // Line 4: ⭐ + Reviews and Rating
+    // Reviews and Rating
     if (product.numeroReview && product.rating) {
       const rating = this.formatRating(product.rating);
       lines.push(`⭐ ${product.numeroReview} Recensioni: ${rating} / 5.0`);
     }
 
-    // Line 5: 🚚 + Availability
+    // Availability
     lines.push(`🚚 Venduto e spedito da Amazon`);
 
     return lines.join('\n');
@@ -229,10 +235,10 @@ class NotesGenerator {
   }
 
   /**
-   * Generate single note file with all products for a specific date
+   * Generate single text note file with all products for a specific date
    */
   async generateNotesForDate(targetDate) {
-    console.log(`\n📝 Generating Mac Notes file for date: ${targetDate}`);
+    console.log(`\n📝 Generating text note file for date: ${targetDate}`);
 
     try {
       // Read products for target date
@@ -245,7 +251,7 @@ class NotesGenerator {
 
       console.log(`✅ Found ${products.length} products for date: ${targetDate}`);
 
-      // Create output directory if it doesn't exist
+      // Desktop should already exist, but ensure it does
       await fs.mkdir(this.outputDir, { recursive: true });
 
       // Generate filename: nonnapina_DD-MM-YYYY.txt
@@ -268,7 +274,7 @@ class NotesGenerator {
 
       console.log(`📋 Products grouped in ${productsByCategory.size} categories`);
 
-      // Build content with all products grouped by category
+      // Build text content with all products grouped by category
       const contentParts = [];
       let isFirstCategory = true;
 
@@ -279,10 +285,8 @@ class NotesGenerator {
         }
         isFirstCategory = false;
 
-        // Add category header in bold and uppercase
-        const categoryHeader = `**${category.toUpperCase()}**`;
-        contentParts.push(categoryHeader);
-        contentParts.push('═'.repeat(50));
+        // Add category header in uppercase
+        contentParts.push(`━━━━━ ${category.toUpperCase()} ━━━━━`);
         contentParts.push('');
 
         // Add all products in this category
@@ -300,13 +304,23 @@ class NotesGenerator {
 
       const finalContent = contentParts.join('\n');
 
-      // Write single file with all products
+      // Write text file
       await fs.writeFile(filePath, finalContent, 'utf-8');
 
       console.log(
-        `\n✅ Successfully generated note file with ${products.length} products in ${productsByCategory.size} categories`
+        `\n✅ Successfully generated text note file with ${products.length} products in ${productsByCategory.size} categories`
       );
-      console.log(`📁 File saved to: ${filePath}`);
+      console.log(`📁 File saved to Desktop: ${fileName}`);
+
+      // Try to open the file automatically with TextEdit (macOS only)
+      try {
+        console.log(`\n🚀 Opening file with TextEdit...`);
+        await execAsync(`open -a TextEdit "${filePath}"`);
+        console.log(`✅ File opened successfully`);
+      } catch (error) {
+        console.log(`ℹ️  File created but could not be opened automatically: ${error.message}`);
+        console.log(`   Please open the file manually from your Desktop`);
+      }
 
       return {
         success: true,
@@ -329,7 +343,7 @@ class NotesGenerator {
   }
 
   /**
-   * Generate note file using configured date or today's date
+   * Generate text note file using configured date or today's date
    */
   async generateNotes(configuredDate = '') {
     // Use configured date or today's date

@@ -196,7 +196,9 @@ export async function fetchProductsAndExport() {
     console.log(`📁 JSON output file: ${config.output.productsFilePath}`);
     console.log(`📊 Excel tracker file: ./output/tracker_outcome.xlsx`);
     if (notesResult.success) {
-      console.log(`📝 Mac Notes file: ${notesResult.fileName} (${notesResult.count} products)`);
+      console.log(
+        `📝 Mac Notes file: ${notesResult.fileName} (saved on Desktop - ${notesResult.count} products)`
+      );
     }
     console.log('═'.repeat(60) + '\n');
 
