@@ -186,6 +186,7 @@ class AmazonService {
         price = priceStructure.money?.amount || priceStructure.amount;
         currency = priceStructure.money?.currency || priceStructure.currency;
       }
+
       if (product.offersV2.listings[0].availability) {
         availability = product.offersV2.listings[0].availability;
       }
@@ -215,6 +216,9 @@ class AmazonService {
 
       // Pricing and Availability
       price: price,
+      originalPrice: null, // Not available from API
+      discountAmount: null, // Not available from API
+      discountPercentage: null, // Not available from API
       currency: currency || 'EUR',
       availability: availability || null,
 

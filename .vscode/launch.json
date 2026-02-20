@@ -8,6 +8,7 @@
       "skipFiles": ["<node_internals>/**"],
       "program": "${workspaceFolder}/src/index.js",
       "console": "integratedTerminal",
+      "runtimeExecutable": "${workspaceFolder}/bin/run-node.sh",
       "env": {
         "NODE_ENV": "development"
       }
@@ -18,7 +19,8 @@
       "name": "🧪 Test Keepa Scraper Only",
       "skipFiles": ["<node_internals>/**"],
       "program": "${workspaceFolder}/src/scrapers/keepa.js",
-      "console": "integratedTerminal"
+      "console": "integratedTerminal",
+      "runtimeExecutable": "${workspaceFolder}/bin/run-node.sh"
     },
     {
       "type": "node",
@@ -26,7 +28,8 @@
       "name": "🔗 Test Amazon API Only",
       "skipFiles": ["<node_internals>/**"],
       "program": "${workspaceFolder}/src/services/amazon.js",
-      "console": "integratedTerminal"
+      "console": "integratedTerminal",
+      "runtimeExecutable": "${workspaceFolder}/bin/run-node.sh"
     }
   ]
 }

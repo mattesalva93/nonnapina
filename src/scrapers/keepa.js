@@ -461,44 +461,111 @@ export async function scrapeKeepaDeals() {
 
         console.log(`   ✅ Products loaded`);
 
-        // Extract ONLY first 10 products for this category
-        const categoryAsins = await page.evaluate(() => {
-          const asins = [];
+        // Extract products with full details (ASIN, prices, discount)
+        const categoryProducts = await page.evaluate(() => {
+          const products = [];
           const seen = new Set();
 
           // Extract from Keepa internal links (href="#!product/8-ASIN")
           const keepaLinks = document.querySelectorAll('a[href*="#!product/"]');
+
           for (const link of keepaLinks) {
             const href = link.getAttribute('href');
             if (!href) continue;
 
             const match = href.match(/#!product\/\d+-([A-Z0-9]{10})/);
-            if (match && match[1] && !seen.has(match[1])) {
-              asins.push(match[1]);
-              seen.add(match[1]);
+            if (!match || !match[1] || seen.has(match[1])) continue;
+
+            const asin = match[1];
+            seen.add(asin);
+
+            // Find the product row/container by traversing up from the link
+            let productContainer = link;
+            while (productContainer && !productContainer.classList.contains('productRow')) {
+              productContainer = productContainer.parentElement;
             }
 
+            // If no productRow found, try to find any parent div with product data
+            if (!productContainer) {
+              productContainer =
+                link.closest('div[style*="flex"]') || link.closest('tr') || link.parentElement;
+            }
+
+            // Extract discount percentage from span.productSmallPercent-24
+            let discount = null;
+            if (productContainer) {
+              const discountSpan = productContainer.querySelector('span.productSmallPercent-24');
+              if (discountSpan) {
+                const discountText = discountSpan.textContent.trim();
+                // Extract number from text like "-15%" to get "15"
+                const match = discountText.match(/(-?\d+)/);
+                if (match) {
+                  discount = parseInt(match[1]);
+                }
+              }
+            }
+
+            // Extract prices
+            // avgPrice: from span.productPriceTableTdSmallS
+            // currentPrice: from span.productPriceTableTdLargeS
+            let avgPrice = null;
+            let currentPrice = null;
+            if (productContainer) {
+              // Extract average price from span.productPriceTableTdSmallS
+              const avgPriceSpan = productContainer.querySelector('span.productPriceTableTdSmallS');
+              if (avgPriceSpan) {
+                const avgText = avgPriceSpan.textContent.trim();
+                const avgMatch = avgText.match(/(\d+[.,]\d+)/);
+                if (avgMatch) avgPrice = parseFloat(avgMatch[1].replace(',', '.'));
+              }
+
+              // Extract current (discounted) price from span.productPriceTableTdLargeS
+              const currPriceSpan = productContainer.querySelector(
+                'span.productPriceTableTdLargeS'
+              );
+              if (currPriceSpan) {
+                const currText = currPriceSpan.textContent.trim();
+                const currMatch = currText.match(/(\d+[.,]\d+)/);
+                if (currMatch) currentPrice = parseFloat(currMatch[1].replace(',', '.'));
+              }
+            }
+
+            products.push({
+              asin,
+              discount,
+              avgPrice,
+              currentPrice,
+            });
+
             // LIMIT: Only 10 products per category
-            if (asins.length >= 10) break;
+            if (products.length >= 10) break;
           }
 
-          return asins;
+          return products;
         });
 
-        console.log(`   📦 Extracted ${categoryAsins.length} products`);
+        console.log(`   📦 Extracted ${categoryProducts.length} products with pricing`);
 
-        // Show first 3 ASINs for verification
-        if (categoryAsins.length > 0) {
-          const sample = categoryAsins.slice(0, 3).join(', ');
-          console.log(`   🔍 Sample ASINs: ${sample}`);
+        // Show first 3 products for verification
+        if (categoryProducts.length > 0) {
+          const sample = categoryProducts.slice(0, 3);
+          sample.forEach(p => {
+            const priceInfo = p.avgPrice
+              ? ` (avg: €${p.avgPrice}, current: €${p.currentPrice}, discount: ${p.discount}%)`
+              : '';
+            console.log(`   🔍 ${p.asin}${priceInfo}`);
+          });
         }
 
         // Add products to the list with category name
-        for (const asin of categoryAsins) {
-          if (!allProducts.find(p => p.asin === asin)) {
+        for (const product of categoryProducts) {
+          if (!allProducts.find(p => p.asin === product.asin)) {
             allProducts.push({
-              asin,
+              asin: product.asin,
               category: categoryName,
+              discount: product.discount,
+              avgPrice: product.avgPrice,
+              currentPrice: product.currentPrice,
             });
           }
         }
