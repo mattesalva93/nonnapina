@@ -28,6 +28,11 @@ export const config = {
     // If true, generates storefront links (requires AMAZON_STOREFRONT_ID)
     includeStorefrontLinks: process.env.INCLUDE_STOREFRONT_LINKS === 'true',
   },
+
+  notes: {
+    // Date for posts in format DD/MM/YYYY (empty string uses today's date)
+    dateForPosts: process.env.DATE_FOR_POSTS || '',
+  },
 };
 
 // Validate required config

@@ -1,6 +1,6 @@
 {
   "name": "keepa-tracker",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Keepa deals scraper with Amazon affiliate link generator",
   "main": "src/index.js",
   "type": "module",

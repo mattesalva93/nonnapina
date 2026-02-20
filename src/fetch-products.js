@@ -4,6 +4,7 @@ import { validateConfig, config } from './config/index.js';
 import { amazonService } from './services/amazon.js';
 import { loadFromJSON, saveToJSON } from './utils/json-builder.js';
 import { excelHandler } from './utils/excel-handler.js';
+import { notesGenerator } from './utils/notes-generator.js';
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -117,6 +118,15 @@ export async function fetchProductsAndExport() {
     console.log(`   Excel file status: ${excelStats.message}`);
     await excelHandler.appendProducts(productsWithCategory);
 
+    // Step 6.6: Generate Mac Notes files for social media posts
+    console.log('\n📋 Step 6.6: Generating Mac Notes file...');
+    const notesResult = await notesGenerator.generateNotes(config.notes.dateForPosts);
+    if (notesResult.success) {
+      console.log(`   ✅ ${notesResult.message}`);
+    } else {
+      console.log(`   ⚠️  ${notesResult.message}`);
+    }
+
     // Step 7: Generate summary report
     console.log('\n📋 Step 7: Generating summary report...');
     const summary = {
@@ -185,6 +195,9 @@ export async function fetchProductsAndExport() {
     console.log(`📊 Total: ${summary.totalProducts} products`);
     console.log(`📁 JSON output file: ${config.output.productsFilePath}`);
     console.log(`📊 Excel tracker file: ./output/tracker_outcome.xlsx`);
+    if (notesResult.success) {
+      console.log(`📝 Mac Notes file: ${notesResult.fileName} (${notesResult.count} products)`);
+    }
     console.log('═'.repeat(60) + '\n');
 
     // Output sample product structure
