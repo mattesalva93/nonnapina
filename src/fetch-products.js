@@ -42,6 +42,8 @@ export async function fetchProductsAndExport() {
         discount: product.discount,
         avgPrice: product.avgPrice,
         currentPrice: product.currentPrice,
+        rating: product.rating,
+        reviewCount: product.reviewCount,
       };
 
       if (!productsByCategory[product.category]) {
@@ -100,6 +102,8 @@ export async function fetchProductsAndExport() {
         keepaDiscount: keepaData.discount,
         keepaAvgPrice: keepaData.avgPrice,
         keepaCurrentPrice: keepaData.currentPrice,
+        keepaRating: keepaData.rating,
+        keepaReviewCount: keepaData.reviewCount,
       };
     });
 

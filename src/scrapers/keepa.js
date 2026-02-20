@@ -461,9 +461,9 @@ export async function scrapeKeepaDeals() {
 
         console.log(`   ✅ Products loaded`);
 
-        // Extract products with full details (ASIN, prices, discount)
-        const categoryProducts = await page.evaluate(() => {
-          const products = [];
+        // Extract product data (hrefs + pricing) from deals list BEFORE clicking
+        const productLinks = await page.evaluate(maxProducts => {
+          const links = [];
           const seen = new Set();
 
           // Extract from Keepa internal links (href="#!product/8-ASIN")
@@ -479,7 +479,7 @@ export async function scrapeKeepaDeals() {
             const asin = match[1];
             seen.add(asin);
 
-            // Find the product row/container by traversing up from the link
+            // Extract pricing data from the deals list (BEFORE clicking)
             let productContainer = link;
             while (productContainer && !productContainer.classList.contains('productRow')) {
               productContainer = productContainer.parentElement;
@@ -491,27 +491,21 @@ export async function scrapeKeepaDeals() {
                 link.closest('div[style*="flex"]') || link.closest('tr') || link.parentElement;
             }
 
-            // Extract discount percentage from span.productSmallPercent-24
+            // Extract discount percentage
             let discount = null;
             if (productContainer) {
               const discountSpan = productContainer.querySelector('span.productSmallPercent-24');
               if (discountSpan) {
                 const discountText = discountSpan.textContent.trim();
-                // Extract number from text like "-15%" to get "15"
-                const match = discountText.match(/(-?\d+)/);
-                if (match) {
-                  discount = parseInt(match[1]);
-                }
+                const discountMatch = discountText.match(/(-?\d+)/);
+                if (discountMatch) discount = parseInt(discountMatch[1]);
               }
             }
 
             // Extract prices
-            // avgPrice: from span.productPriceTableTdSmallS
-            // currentPrice: from span.productPriceTableTdLargeS
             let avgPrice = null;
             let currentPrice = null;
             if (productContainer) {
-              // Extract average price from span.productPriceTableTdSmallS
               const avgPriceSpan = productContainer.querySelector('span.productPriceTableTdSmallS');
               if (avgPriceSpan) {
                 const avgText = avgPriceSpan.textContent.trim();
@@ -519,7 +513,6 @@ export async function scrapeKeepaDeals() {
                 if (avgMatch) avgPrice = parseFloat(avgMatch[1].replace(',', '.'));
               }
 
-              // Extract current (discounted) price from span.productPriceTableTdLargeS
               const currPriceSpan = productContainer.querySelector(
                 'span.productPriceTableTdLargeS'
               );
@@ -530,32 +523,143 @@ export async function scrapeKeepaDeals() {
               }
             }
 
-            products.push({
+            links.push({
               asin,
+              href,
               discount,
               avgPrice,
               currentPrice,
             });
 
-            // LIMIT: Only 10 products per category
-            if (products.length >= 10) break;
+            // LIMIT: Apply configured limit for products per category
+            if (links.length >= maxProducts) break;
           }
 
-          return products;
-        });
+          return links;
+        }, config.keepa.maxProductsPerCategory);
 
-        console.log(`   📦 Extracted ${categoryProducts.length} products with pricing`);
+        console.log(`   📦 Found ${productLinks.length} products to extract`);
 
-        // Show first 3 products for verification
-        if (categoryProducts.length > 0) {
-          const sample = categoryProducts.slice(0, 3);
-          sample.forEach(p => {
-            const priceInfo = p.avgPrice
-              ? ` (avg: €${p.avgPrice}, current: €${p.currentPrice}, discount: ${p.discount}%)`
+        // Now click each product to get reviews only (pricing already extracted)
+        const categoryProducts = [];
+        for (let i = 0; i < productLinks.length; i++) {
+          const { asin, href, discount, avgPrice, currentPrice } = productLinks[i];
+
+          try {
+            console.log(`   🔄 [${i + 1}/${productLinks.length}] Processing ${asin}...`);
+
+            // Click the product link to open detail page
+            const clickSuccess = await page.evaluate(targetHref => {
+              const link = document.querySelector(`a[href="${targetHref}"]`);
+              if (link) {
+                link.click();
+                return true;
+              }
+              return false;
+            }, href);
+
+            if (!clickSuccess) {
+              console.log(`   ⚠️  Could not click product link for ${asin}`);
+              // Still add product with pricing data but no reviews
+              categoryProducts.push({
+                asin,
+                discount,
+                avgPrice,
+                currentPrice,
+                rating: null,
+                reviewCount: null,
+              });
+              continue;
+            }
+
+            // Wait for product detail page to load
+            await delay(2000); // Give time for page to load
+
+            // Wait for productInfoBox to be visible
+            await page.waitForSelector('#productInfoBox', { timeout: 10000 }).catch(() => null);
+
+            // Extract ONLY reviews from product detail page (pricing already from list)
+            const reviewData = await page.evaluate(() => {
+              const data = {
+                rating: null,
+                reviewCount: null,
+              };
+
+              // Extract reviews from productInfoBox
+              try {
+                const reviewElement = document.evaluate(
+                  '//*[@id="productInfoBox"]/div[1]/span/span',
+                  document,
+                  null,
+                  XPathResult.FIRST_ORDERED_NODE_TYPE,
+                  null
+                ).singleNodeValue;
+
+                if (reviewElement) {
+                  const reviewText = reviewElement.textContent.trim();
+                  // Try to parse rating and count from text
+                  // Expected formats: "4.5 out of 5 stars (1,234)" or "4.5 stelle (1234)" etc
+                  const ratingMatch = reviewText.match(/(\d+[.,]\d+)/);
+                  if (ratingMatch) {
+                    data.rating = parseFloat(ratingMatch[1].replace(',', '.'));
+                  }
+
+                  // Extract review count - look for numbers in parentheses or after "stars"
+                  const countMatch = reviewText.match(/\(?([\d.,]+)\)?(?:\s+review)?/i);
+                  if (countMatch) {
+                    const countStr = countMatch[1].replace(/[.,]/g, '');
+                    data.reviewCount = parseInt(countStr, 10);
+                  }
+                }
+              } catch (e) {
+                console.log('Error extracting reviews:', e.message);
+              }
+
+              return data;
+            });
+
+            // Combine pricing data (from list) with review data (from detail page)
+            const productData = {
+              asin,
+              discount,
+              avgPrice,
+              currentPrice,
+              rating: reviewData.rating,
+              reviewCount: reviewData.reviewCount,
+            };
+
+            categoryProducts.push(productData);
+
+            // Log extracted data
+            const reviewInfo = productData.rating
+              ? ` | ⭐ ${productData.rating} (${productData.reviewCount} reviews)`
+              : ' | ⭐ no reviews';
+            const priceInfo = productData.avgPrice
+              ? ` | €${productData.currentPrice} (was €${productData.avgPrice}, ${productData.discount}%)`
               : '';
-            console.log(`   🔍 ${p.asin}${priceInfo}`);
-          });
+            console.log(`   ✅ ${asin}${priceInfo}${reviewInfo}`);
+
+            // Navigate back to deals list (click back in history or re-click category)
+            await page.goBack();
+            await delay(1500); // Wait for page to reload
+
+            // Verify we're back on the deals page
+            await page.waitForSelector('#productPage0', { timeout: 10000 }).catch(() => null);
+          } catch (error) {
+            console.log(`   ⚠️  Error processing ${asin}: ${error.message}`);
+            // Try to recover by going back
+            try {
+              await page.goBack();
+              await delay(1500);
+            } catch (e) {
+              console.log(`   ⚠️  Could not recover, continuing...`);
+            }
+          }
         }
+
+        console.log(
+          `   📦 Successfully extracted ${categoryProducts.length} products with reviews and pricing`
+        );
 
         // Add products to the list with category name
         for (const product of categoryProducts) {
@@ -566,6 +670,8 @@ export async function scrapeKeepaDeals() {
               discount: product.discount,
               avgPrice: product.avgPrice,
               currentPrice: product.currentPrice,
+              rating: product.rating,
+              reviewCount: product.reviewCount,
             });
           }
         }

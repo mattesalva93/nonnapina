@@ -192,16 +192,30 @@ class AmazonService {
       }
     }
 
-    // Extract rating if available
+    // Extract rating if available (try multiple possible structures)
     let rating = null;
     if (product.customerReviews?.starRating) {
       rating = product.customerReviews.starRating;
+    } else if (product.customerReviews?.starRating?.value) {
+      rating = product.customerReviews.starRating.value;
+    } else if (product.customerReviews?.starRating?.displayValue) {
+      rating = parseFloat(product.customerReviews.starRating.displayValue);
     }
 
-    // Extract rating count if available
+    // Extract rating count if available (try multiple possible structures)
     let ratingCount = null;
     if (product.customerReviews?.count) {
       ratingCount = product.customerReviews.count;
+    } else if (product.customerReviews?.count?.value) {
+      ratingCount = product.customerReviews.count.value;
+    } else if (product.customerReviews?.reviewsCount) {
+      ratingCount = product.customerReviews.reviewsCount;
+    }
+
+    // DEBUG: Log customer reviews structure for first few products
+    if (!rating && !ratingCount && product.customerReviews) {
+      console.log(`   ⚠️  ASIN ${product.asin}: customerReviews present but no data extracted`);
+      console.log(`      Structure:`, JSON.stringify(product.customerReviews, null, 2));
     }
 
     // Generate affiliate links with all options

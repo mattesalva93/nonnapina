@@ -8,8 +8,7 @@ export const config = {
     secretKey: process.env.AMAZON_SECRET_KEY,
     partnerTag: process.env.AMAZON_PARTNER_TAG,
     marketplace: process.env.AMAZON_MARKETPLACE || 'IT',
-    // Link generation options
-    storefrontId: process.env.AMAZON_STOREFRONT_ID || null, // Optional: Your storefront ID for storefront links
+    storefrontId: process.env.AMAZON_STOREFRONT_ID || null,
   },
 
   keepa: {
