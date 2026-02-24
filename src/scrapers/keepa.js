@@ -466,61 +466,79 @@ export async function scrapeKeepaDeals() {
           const links = [];
           const seen = new Set();
 
-          // Extract from Keepa internal links (href="#!product/8-ASIN")
-          const keepaLinks = document.querySelectorAll('a[href*="#!product/"]');
+          // Iterate through containers in order: p0, p1, p2, ... to maintain visual order
+          let containerIndex = 0;
+          let consecutiveMisses = 0;
+          const maxConsecutiveMisses = 5; // Stop if we miss 5 consecutive containers
 
-          for (const link of keepaLinks) {
+          while (links.length < maxProducts && consecutiveMisses < maxConsecutiveMisses) {
+            const containerId = `p${containerIndex}`;
+            const container = document.getElementById(containerId);
+
+            if (!container) {
+              consecutiveMisses++;
+              containerIndex++;
+              continue;
+            }
+
+            consecutiveMisses = 0; // Reset counter when we find a container
+
+            // Get the direct <a> child of this container
+            const link = container.querySelector(':scope > a[href*="#!product/"]');
+            if (!link) {
+              containerIndex++;
+              continue;
+            }
+
             const href = link.getAttribute('href');
-            if (!href) continue;
+            if (!href) {
+              containerIndex++;
+              continue;
+            }
 
             const match = href.match(/#!product\/\d+-([A-Z0-9]{10})/);
-            if (!match || !match[1] || seen.has(match[1])) continue;
+            if (!match || !match[1]) {
+              containerIndex++;
+              continue;
+            }
+
+            if (seen.has(match[1])) {
+              containerIndex++;
+              continue;
+            }
 
             const asin = match[1];
             seen.add(asin);
 
-            // Extract pricing data from the deals list (BEFORE clicking)
-            let productContainer = link;
-            while (productContainer && !productContainer.classList.contains('productRow')) {
-              productContainer = productContainer.parentElement;
-            }
-
-            // If no productRow found, try to find any parent div with product data
-            if (!productContainer) {
-              productContainer =
-                link.closest('div[style*="flex"]') || link.closest('tr') || link.parentElement;
-            }
+            // Use the container directly for extracting pricing data
+            const productContainer = container;
 
             // Extract discount percentage
             let discount = null;
-            if (productContainer) {
-              const discountSpan = productContainer.querySelector('span.productSmallPercent-24');
-              if (discountSpan) {
-                const discountText = discountSpan.textContent.trim();
-                const discountMatch = discountText.match(/(-?\d+)/);
-                if (discountMatch) discount = parseInt(discountMatch[1]);
-              }
+            const discountSpan = productContainer.querySelector(
+              'span.productSmallPercent-24, span.productSmallPercent-16'
+            );
+            if (discountSpan) {
+              const discountText = discountSpan.textContent.trim();
+              const discountMatch = discountText.match(/(-?\d+)/);
+              if (discountMatch) discount = parseInt(discountMatch[1]);
             }
 
             // Extract prices
             let avgPrice = null;
             let currentPrice = null;
-            if (productContainer) {
-              const avgPriceSpan = productContainer.querySelector('span.productPriceTableTdSmallS');
-              if (avgPriceSpan) {
-                const avgText = avgPriceSpan.textContent.trim();
-                const avgMatch = avgText.match(/(\d+[.,]\d+)/);
-                if (avgMatch) avgPrice = parseFloat(avgMatch[1].replace(',', '.'));
-              }
+            const avgPriceSpan = productContainer.querySelector('span.productPriceTableTdSmallS');
+            if (avgPriceSpan) {
+              const avgText = avgPriceSpan.textContent.trim();
+              const avgMatch = avgText.match(/(\d+[.,]\d+)/);
+              if (avgMatch) avgPrice = parseFloat(avgMatch[1].replace(',', '.'));
+            }
 
-              const currPriceSpan = productContainer.querySelector(
-                'span.productPriceTableTdLargeS'
-              );
-              if (currPriceSpan) {
-                const currText = currPriceSpan.textContent.trim();
-                const currMatch = currText.match(/(\d+[.,]\d+)/);
-                if (currMatch) currentPrice = parseFloat(currMatch[1].replace(',', '.'));
-              }
+            const currPriceSpan = productContainer.querySelector('span.productPriceTableTdLargeS');
+            if (currPriceSpan) {
+              const currText = currPriceSpan.textContent.trim();
+              const currMatch = currText.match(/(\d+[.,]\d+)/);
+              if (currMatch) currentPrice = parseFloat(currMatch[1].replace(',', '.'));
             }
 
             links.push({
@@ -531,8 +549,7 @@ export async function scrapeKeepaDeals() {
               currentPrice,
             });
 
-            // LIMIT: Apply configured limit for products per category
-            if (links.length >= maxProducts) break;
+            containerIndex++;
           }
 
           return links;
@@ -549,14 +566,16 @@ export async function scrapeKeepaDeals() {
             console.log(`   🔄 [${i + 1}/${productLinks.length}] Processing ${asin}...`);
 
             // Click the product link to open detail page
-            const clickSuccess = await page.evaluate(targetHref => {
-              const link = document.querySelector(`a[href="${targetHref}"]`);
+            // Use ASIN-based search for more robust link finding
+            const clickSuccess = await page.evaluate(targetAsin => {
+              const links = Array.from(document.querySelectorAll('a[href*="#!product/"]'));
+              const link = links.find(l => l.getAttribute('href').includes(`-${targetAsin}`));
               if (link) {
                 link.click();
                 return true;
               }
               return false;
-            }, href);
+            }, asin);
 
             if (!clickSuccess) {
               console.log(`   ⚠️  Could not click product link for ${asin}`);
@@ -585,30 +604,26 @@ export async function scrapeKeepaDeals() {
                 reviewCount: null,
               };
 
-              // Extract reviews from productInfoBox
               try {
-                const reviewElement = document.evaluate(
-                  '//*[@id="productInfoBox"]/div[1]/span/span',
-                  document,
-                  null,
-                  XPathResult.FIRST_ORDERED_NODE_TYPE,
-                  null
-                ).singleNodeValue;
+                // Find the review span in productInfoBox - it's in the first line with stars
+                const productInfoBox = document.querySelector('#productInfoBox');
+                if (productInfoBox) {
+                  // Get the first div's full text which contains the rating and review count
+                  const firstDiv = productInfoBox.querySelector('div');
+                  if (firstDiv) {
+                    const fullText = firstDiv.textContent.trim();
 
-                if (reviewElement) {
-                  const reviewText = reviewElement.textContent.trim();
-                  // Try to parse rating and count from text
-                  // Expected formats: "4.5 out of 5 stars (1,234)" or "4.5 stelle (1234)" etc
-                  const ratingMatch = reviewText.match(/(\d+[.,]\d+)/);
-                  if (ratingMatch) {
-                    data.rating = parseFloat(ratingMatch[1].replace(',', '.'));
-                  }
+                    // Extract RATING - find any decimal number (e.g., "2.2" or "4.5")
+                    const ratingMatch = fullText.match(/(\d+[.,]\d+)/);
+                    if (ratingMatch) {
+                      data.rating = parseFloat(ratingMatch[1].replace(',', '.'));
+                    }
 
-                  // Extract review count - look for numbers in parentheses or after "stars"
-                  const countMatch = reviewText.match(/\(?([\d.,]+)\)?(?:\s+review)?/i);
-                  if (countMatch) {
-                    const countStr = countMatch[1].replace(/[.,]/g, '');
-                    data.reviewCount = parseInt(countStr, 10);
+                    // Extract REVIEW COUNT - find number in parentheses: "(4 recensioni)" or "(123)"
+                    const countMatch = fullText.match(/\((\d+)/);
+                    if (countMatch) {
+                      data.reviewCount = parseInt(countMatch[1], 10);
+                    }
                   }
                 }
               } catch (e) {
