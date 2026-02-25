@@ -166,40 +166,51 @@
         margin-top: 0;
       }
 
+      /* Products Grid Container */
+      .products-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 25px;
+        margin: 30px 0;
+      }
+
       /* Product Card */
       .product {
-        margin-bottom: 40px;
-        padding: 30px;
+        padding: 20px;
         background: #f9f9f9;
         border-radius: 12px;
         box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        display: flex;
+        flex-direction: column;
+        height: 100%;
       }
 
       /* Image Section */
       .image-section {
         text-align: center;
-        margin-bottom: 25px;
-        padding: 20px;
+        margin-bottom: 15px;
+        padding: 15px;
         background: white;
         border-radius: 8px;
+        flex-shrink: 0;
       }
 
       .product-image {
         max-width: 100%;
         height: auto;
-        max-height: 400px;
+        max-height: 250px;
         object-fit: contain;
         border-radius: 8px;
         box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
-        margin-bottom: 15px;
+        margin-bottom: 10px;
       }
 
       .image-link {
         display: inline-block;
         color: #667eea;
         text-decoration: none;
-        font-size: 0.9em;
-        padding: 8px 16px;
+        font-size: 0.8em;
+        padding: 6px 12px;
         border: 2px solid #667eea;
         border-radius: 6px;
       }
@@ -212,24 +223,26 @@
       /* Copyable Content Section */
       .copyable-content {
         display: flex;
-        gap: 20px;
+        gap: 15px;
         align-items: flex-start;
         background: white;
-        padding: 25px;
+        padding: 15px;
         border-radius: 8px;
         border: 2px solid #e0e0e0;
+        flex: 1;
       }
 
       .text-content {
         flex: 1;
+        min-width: 0;
       }
 
       .text-content pre {
         font-family: inherit;
         white-space: pre-wrap;
         word-wrap: break-word;
-        font-size: 1.05em;
-        line-height: 1.8;
+        font-size: 0.9em;
+        line-height: 1.6;
         color: #444;
       }
 
@@ -246,17 +259,17 @@
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
         border: none;
-        padding: 10px 18px;
+        padding: 8px 14px;
         border-radius: 8px;
         cursor: pointer;
-        font-size: 0.9em;
+        font-size: 0.85em;
         font-weight: bold;
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 6px;
+        gap: 4px;
         box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
-        min-width: 85px;
+        min-width: 70px;
       }
 
       .copy-btn:hover {
@@ -268,19 +281,19 @@
       }
 
       .copy-icon {
-        font-size: 1.3em;
+        font-size: 1.2em;
       }
 
       .copy-text {
-        font-size: 0.85em;
+        font-size: 0.8em;
       }
 
       /* Copy Status Badge */
       .copy-status-badge {
-        margin-top: 15px;
-        padding: 8px 16px;
+        margin-top: 10px;
+        padding: 6px 12px;
         border-radius: 6px;
-        font-size: 0.85em;
+        font-size: 0.75em;
         font-weight: 600;
         text-align: center;
       }
@@ -293,14 +306,6 @@
       .copy-status-badge.copied {
         background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);
         color: white;
-      }
-
-      /* Product Separator */
-      .product-separator {
-        border: none;
-        height: 2px;
-        background: linear-gradient(to right, transparent, #667eea, transparent);
-        margin: 30px 0;
       }
 
       /* Responsive Design */
@@ -330,6 +335,20 @@
 
         .container {
           padding: 20px;
+        }
+
+        .products-grid {
+          grid-template-columns: 1fr;
+          gap: 20px;
+        }
+
+        .product-image {
+          max-height: 200px;
+        }
+
+        .text-content pre {
+          font-size: 0.85em;
+          line-height: 1.5;
         }
 
         h1 {

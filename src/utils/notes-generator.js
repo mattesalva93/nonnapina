@@ -477,17 +477,17 @@ class NotesGenerator {
           `<div class="category-header" id="${categoryId}">━━━━━ ${this.escapeHtml(category.toUpperCase())} ━━━━━</div>`
         );
 
+        // Open products grid container
+        contentParts.push('<div class="products-grid">');
+
         // Add all products in this category
-        for (let i = 0; i < categoryProducts.length; i++) {
-          const product = categoryProducts[i];
+        for (const product of categoryProducts) {
           const productContent = this.formatProductForNote(product);
           contentParts.push(productContent);
-
-          // Add separator between products in the same category (except after the last one)
-          if (i < categoryProducts.length - 1) {
-            contentParts.push('<hr class="product-separator">');
-          }
         }
+
+        // Close products grid container
+        contentParts.push('</div>');
       }
 
       const htmlContent = contentParts.join('\n');
