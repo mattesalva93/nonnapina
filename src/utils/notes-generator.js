@@ -557,17 +557,15 @@ class NotesGenerator {
         }
       }
 
-      // Create a Set of top product ASINs for easy lookup (both top reviews and top deals)
-      const topProductAsins = new Set([
-        ...topProducts.map(p => p.asin),
-        ...topDeals.map(p => p.asin),
-      ]);
+      // Create a Set of top deals ASINs for easy lookup (only top deals, not top reviews)
+      // Products in Top Review Scores will still appear in their original category
+      const topDealsAsins = new Set(topDeals.map(p => p.asin));
 
-      // Group products by category (excluding top products and top deals)
+      // Group products by category (excluding only top deals)
       const regularProductsByCategory = new Map();
       for (const product of products) {
-        // Skip products that are in top review category or top deals
-        if (topProductAsins.has(product.asin)) {
+        // Skip products that are in top deals (but keep top review products in their categories)
+        if (topDealsAsins.has(product.asin)) {
           continue;
         }
 
