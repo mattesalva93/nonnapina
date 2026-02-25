@@ -1084,8 +1084,8 @@ TOP_DEALS_COUNT=5  # Numero di top deals da mostrare (default: 5)
 #### Output
 
 - **HTML**: Categoria "Top 5 Deals" sempre in prima posizione nell'indice
-- **Immagine collage**: Salvata in `output/assets/top-5-deals.png` (sovrascritta ad ogni esecuzione)
-- **Formato immagine**: PNG, griglia 3+2, dimensioni ottimizzate per social media
+- **Immagine collage**: Salvata in `output/assets/top-5-deals.jpg` (sovrascritta ad ogni esecuzione)
+- **Formato immagine**: JPEG (qualità 85%), griglia 3+2, dimensioni ottimizzate per Telegram
 
 #### Tecnologia
 
@@ -1093,6 +1093,7 @@ TOP_DEALS_COUNT=5  # Numero di top deals da mostrare (default: 5)
 - Download parallelo delle 5 immagini prodotto
 - Fallback con placeholder se il download fallisce
 - Creazione automatica della directory `output/assets`
+- Compressione JPEG ottimizzata per ridurre le dimensioni del file (essenziale per Telegram)
 
 ---
 

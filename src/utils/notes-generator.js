@@ -732,7 +732,7 @@ class NotesGenerator {
           contentParts.push('<div class="products-grid">');
 
           // Generate special post with collage image (use absolute path for browser)
-          const collageFileName = 'top-5-deals.png';
+          const collageFileName = 'top-5-deals.jpg';
           const collageAbsolutePath = path.resolve(this.imageGenerator.outputDir, collageFileName);
           const topDealsPost = this.formatTopDealsPost(categoryProducts, collageAbsolutePath);
           contentParts.push(topDealsPost);

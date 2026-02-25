@@ -41,10 +41,10 @@ class ImageGenerator {
    * Create a collage image from product data
    * Layout: 3 images on top row, 2 images on bottom row
    * @param {Array<Object>} products - Array of product objects (expects 5 products)
-   * @param {string} outputFileName - Output file name (default: top-5-deals.png)
+   * @param {string} outputFileName - Output file name (default: top-5-deals.jpg)
    * @returns {Promise<string>} Path to the generated image
    */
-  async createTopDealsCollage(products, outputFileName = 'top-5-deals.png') {
+  async createTopDealsCollage(products, outputFileName = 'top-5-deals.jpg') {
     try {
       if (!products || products.length !== 5) {
         throw new Error('Exactly 5 products are required for the collage');
@@ -212,7 +212,8 @@ class ImageGenerator {
         },
       })
         .composite(composites)
-        .png()
+        .flatten({ background: { r: 255, g: 255, b: 255 } }) // Remove alpha channel
+        .jpeg({ quality: 85, mozjpeg: true }) // Convert to JPEG with 85% quality
         .toFile(outputPath);
 
       console.log(`✅ Collage created: ${outputPath}`);
@@ -235,11 +236,11 @@ class ImageGenerator {
       create: {
         width,
         height,
-        channels: 4,
-        background: { r: 200, g: 200, b: 200, alpha: 1 },
+        channels: 3,
+        background: { r: 200, g: 200, b: 200 },
       },
     })
-      .png()
+      .jpeg({ quality: 85 })
       .toBuffer();
   }
 }
