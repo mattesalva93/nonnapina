@@ -1056,6 +1056,46 @@ Se vuoi contribuire al progetto:
 
 ---
 
+## 🎨 Nuove Funzionalità - Top Deals Collage
+
+### Top 5 Deals con Immagine Collage
+
+Il sistema ora genera automaticamente una **categoria speciale "Top 5 Deals"** che raccoglie i 5 prodotti con il **maggior sconto percentuale**.
+
+#### Caratteristiche:
+
+- **📊 Selezione Automatica**: Estrae i top 5 prodotti ordinati per percentuale di sconto
+- **🖼️ Collage Immagine**: Crea un'immagine composita con layout 3+2 (3 prodotti sopra, 2 sotto)
+- **📱 Post Speciale**: Genera un post unico con:
+  - Nome prodotto
+  - Smart link
+  - Review score (rating + numero recensioni)
+  - Percentuale sconto
+
+#### Configurazione
+
+Aggiungi al file `.env`:
+
+```env
+# Top 5 Deals Category
+TOP_DEALS_COUNT=5  # Numero di top deals da mostrare (default: 5)
+```
+
+#### Output
+
+- **HTML**: Categoria "Top 5 Deals" sempre in prima posizione nell'indice
+- **Immagine collage**: Salvata in `output/assets/top-5-deals.png` (sovrascritta ad ogni esecuzione)
+- **Formato immagine**: PNG, griglia 3+2, dimensioni ottimizzate per social media
+
+#### Tecnologia
+
+- Utilizza **sharp** per il download e la composizione delle immagini
+- Download parallelo delle 5 immagini prodotto
+- Fallback con placeholder se il download fallisce
+- Creazione automatica della directory `output/assets`
+
+---
+
 ## 📞 Supporto
 
 Per problemi tecnici o domande:

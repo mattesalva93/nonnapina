@@ -36,6 +36,8 @@ export const config = {
     topReviewCount: parseInt(process.env.TOP_REVIEW_COUNT) || 5,
     // Minimum number of reviews required
     minReviews: parseInt(process.env.MIN_REVIEWS) || 10,
+    // Number of best deals to feature with image collage
+    topDealsCount: parseInt(process.env.TOP_DEALS_COUNT) || 5,
   },
 };
 

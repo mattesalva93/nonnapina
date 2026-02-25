@@ -7,6 +7,7 @@ import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { config } from '../config/index.js';
+import ImageGenerator from './image-generator.js';
 
 const execAsync = promisify(exec);
 
@@ -28,6 +29,8 @@ class NotesGenerator {
     this.templatePath = path.join(__dirname, '../templates/product-page-template.html');
     // Logo path (relative to the HTML file that will be on Desktop)
     this.logoPath = path.join(__dirname, '../../assets/AppIcon.iconset/icon_512x512@2x.png');
+    // Image generator for creating collages
+    this.imageGenerator = new ImageGenerator();
   }
 
   /**
@@ -250,6 +253,83 @@ class NotesGenerator {
   }
 
   /**
+   * Format Top 5 Deals special post with collage image
+   * @param {Array} topDeals - Array of top 5 deal products
+   * @param {string} collageImagePath - Path to the collage image
+   * @returns {string} HTML content for the special post
+   */
+  formatTopDealsPost(topDeals, collageImagePath) {
+    const parts = [];
+
+    parts.push('<div class="product top-deals-post">');
+
+    // Collage image section
+    if (collageImagePath) {
+      parts.push('  <div class="image-section">');
+      parts.push(
+        `    <img src="${this.escapeHtml(collageImagePath)}" alt="Top 5 Deals" class="product-image top-deals-collage">`
+      );
+      parts.push('  </div>');
+    }
+
+    // Copyable content section with all top deals
+    parts.push('  <div class="copyable-content">');
+    parts.push('    <div class="text-content">');
+
+    const textLines = [];
+    textLines.push('🏆 TOP 5 DEALS - MIGLIORI SCONTI! 🏆');
+    textLines.push('');
+
+    // Add each product
+    topDeals.forEach((product, index) => {
+      if (product.titolo) {
+        textLines.push(`💬 ${product.titolo}`);
+      }
+
+      // Price information
+      if (product.prezzoScontato && product.prezzoOriginale && product.percentualeSconto) {
+        const prezzoScontato = this.formatPrice(product.prezzoScontato);
+        const prezzoOriginale = this.formatPrice(product.prezzoOriginale);
+        const sconto = this.formatDiscount(product.percentualeSconto);
+        textLines.push(`💰 A soli ${prezzoScontato}€ invece di ${prezzoOriginale}€ (-${sconto}%)`);
+      } else if (product.prezzoScontato) {
+        const prezzoScontato = this.formatPrice(product.prezzoScontato);
+        textLines.push(`💰 A soli ${prezzoScontato}€`);
+      }
+
+      if (product.smartLinkURL) {
+        textLines.push(`🔗 ${product.smartLinkURL}`);
+      }
+
+      textLines.push(''); // Empty line between products
+    });
+
+    const textContent = textLines.join('\n');
+    parts.push(`      <pre>${this.escapeHtml(textContent)}</pre>`);
+    parts.push(
+      `      <textarea class="hidden-copy-text">${this.escapeHtml(textContent)}</textarea>`
+    );
+    parts.push('    </div>');
+
+    // Copy button
+    parts.push(
+      '    <button class="copy-btn" onclick="copyToClipboard(this)" title="Copia negli appunti">'
+    );
+    parts.push('      <span class="copy-icon">📋</span>');
+    parts.push('      <span class="copy-text">Copia</span>');
+    parts.push('    </button>');
+
+    parts.push('  </div>');
+
+    // Copy status badge
+    parts.push('  <div class="copy-status-badge new">🆕 Nuova</div>');
+
+    parts.push('</div>');
+
+    return parts.join('\n');
+  }
+
+  /**
    * Escape HTML special characters
    */
   escapeHtml(text) {
@@ -393,6 +473,30 @@ class NotesGenerator {
   }
 
   /**
+   * Extract top deals based on discount percentage
+   * @param {Array} products - All products
+   * @param {number} topCount - Number of top deals to extract
+   * @returns {Array} Top deals by discount percentage
+   */
+  extractTopDeals(products, topCount) {
+    // Filter products with valid discount percentage
+    const eligibleProducts = products.filter(product => {
+      const discount = parseFloat(product.percentualeSconto) || 0;
+      return discount > 0;
+    });
+
+    // Sort by discount percentage (descending)
+    eligibleProducts.sort((a, b) => {
+      const discountA = parseFloat(a.percentualeSconto) || 0;
+      const discountB = parseFloat(b.percentualeSconto) || 0;
+      return discountB - discountA; // Higher discount first
+    });
+
+    // Return top N products
+    return eligibleProducts.slice(0, topCount);
+  }
+
+  /**
    * Generate HTML page with all products for a specific date
    */
   async generateNotesForDate(targetDate) {
@@ -431,13 +535,38 @@ class NotesGenerator {
         );
       }
 
-      // Create a Set of top product ASINs for easy lookup
-      const topProductAsins = new Set(topProducts.map(p => p.asin));
+      // Extract top deals by discount percentage
+      const topDealsCount = config.notes.topDealsCount;
+      const topDeals = this.extractTopDeals(products, topDealsCount);
 
-      // Group products by category (excluding top products)
+      if (topDeals.length > 0) {
+        console.log(`💰 Extracted ${topDeals.length} top deals by discount percentage`);
+
+        // Generate collage image for top deals
+        if (topDeals.length === topDealsCount) {
+          try {
+            await this.imageGenerator.createTopDealsCollage(topDeals);
+            console.log('✅ Top deals collage created successfully');
+          } catch (error) {
+            console.error('❌ Failed to create top deals collage:', error.message);
+          }
+        } else {
+          console.warn(
+            `⚠️  Not enough products for collage (found ${topDeals.length}, need ${topDealsCount})`
+          );
+        }
+      }
+
+      // Create a Set of top product ASINs for easy lookup (both top reviews and top deals)
+      const topProductAsins = new Set([
+        ...topProducts.map(p => p.asin),
+        ...topDeals.map(p => p.asin),
+      ]);
+
+      // Group products by category (excluding top products and top deals)
       const regularProductsByCategory = new Map();
       for (const product of products) {
-        // Skip products that are in top review category
+        // Skip products that are in top review category or top deals
         if (topProductAsins.has(product.asin)) {
           continue;
         }
@@ -449,15 +578,20 @@ class NotesGenerator {
         regularProductsByCategory.get(category).push(product);
       }
 
-      // Build final productsByCategory map with Top Review Scores first
+      // Build final productsByCategory map with special categories first
       const productsByCategory = new Map();
 
-      // Add Top Review Scores category first (if there are any top products)
+      // 1. Add Top 5 Deals category first (if there are any top deals)
+      if (topDeals.length > 0) {
+        productsByCategory.set('Top 5 Deals', topDeals);
+      }
+
+      // 2. Add Top Review Scores category second (if there are any top products)
       if (topProducts.length > 0) {
         productsByCategory.set('Top Review Scores', topProducts);
       }
 
-      // Add all other categories
+      // 3. Add all other categories
       for (const [category, categoryProducts] of regularProductsByCategory) {
         productsByCategory.set(category, categoryProducts);
       }
@@ -477,17 +611,33 @@ class NotesGenerator {
           `<div class="category-header" id="${categoryId}">━━━━━ ${this.escapeHtml(category.toUpperCase())} ━━━━━</div>`
         );
 
-        // Open products grid container
-        contentParts.push('<div class="products-grid">');
+        // Special handling for Top 5 Deals category
+        if (category === 'Top 5 Deals') {
+          // Open products grid container
+          contentParts.push('<div class="products-grid">');
 
-        // Add all products in this category
-        for (const product of categoryProducts) {
-          const productContent = this.formatProductForNote(product);
-          contentParts.push(productContent);
+          // Generate special post with collage image (use absolute path for browser)
+          const collageFileName = 'top-5-deals.png';
+          const collageAbsolutePath = path.resolve(this.imageGenerator.outputDir, collageFileName);
+          const topDealsPost = this.formatTopDealsPost(categoryProducts, collageAbsolutePath);
+          contentParts.push(topDealsPost);
+
+          // Close products grid container
+          contentParts.push('</div>');
+        } else {
+          // Regular category handling
+          // Open products grid container
+          contentParts.push('<div class="products-grid">');
+
+          // Add all products in this category
+          for (const product of categoryProducts) {
+            const productContent = this.formatProductForNote(product);
+            contentParts.push(productContent);
+          }
+
+          // Close products grid container
+          contentParts.push('</div>');
         }
-
-        // Close products grid container
-        contentParts.push('</div>');
       }
 
       const htmlContent = contentParts.join('\n');
