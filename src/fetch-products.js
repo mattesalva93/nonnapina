@@ -201,12 +201,6 @@ export async function fetchProductsAndExport() {
       );
     }
     console.log('═'.repeat(60) + '\n');
-
-    // Output sample product structure
-    if (productsWithCategory.length > 0) {
-      console.log('\n📋 Sample Product (first item):');
-      console.log(JSON.stringify(productsWithCategory[0], null, 2));
-    }
   } catch (error) {
     console.error('\n❌ Fatal error:', error.message);
     console.error(error.stack);

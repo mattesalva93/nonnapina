@@ -253,12 +253,101 @@ class NotesGenerator {
   }
 
   /**
+   * Truncate product titles intelligently to fit within Telegram's character limit
+   * Longer titles are truncated more aggressively than shorter ones
+   * @param {Array} products - Array of products with titles
+   * @param {number} charsToRemove - Number of characters to remove in total
+   * @returns {Array} Products with truncated titles
+   */
+  truncateTitlesEquitably(products, charsToRemove) {
+    // Create a working copy with title lengths
+    const titleData = products
+      .map((product, index) => ({
+        index,
+        originalTitle: product.titolo || '',
+        currentTitle: product.titolo || '',
+        originalLength: (product.titolo || '').length,
+      }))
+      .filter(item => item.originalLength > 0);
+
+    if (titleData.length === 0) {
+      return products;
+    }
+
+    let charsRemoved = 0;
+    const ellipsis = '...';
+    const minTitleLength = 30; // Minimum characters to keep in a title
+
+    // Iteratively truncate titles, starting with the longest ones
+    while (charsRemoved < charsToRemove) {
+      // Find titles that can still be truncated
+      const truncatableTitles = titleData.filter(
+        item => item.currentTitle.length > minTitleLength && !item.currentTitle.endsWith(ellipsis)
+      );
+
+      if (truncatableTitles.length === 0) {
+        // Can't truncate anymore, break
+        console.warn(
+          `⚠️  Could only remove ${charsRemoved} of ${charsToRemove} characters (all titles at minimum length)`
+        );
+        break;
+      }
+
+      // Sort by current length (longest first)
+      truncatableTitles.sort((a, b) => b.currentTitle.length - a.currentTitle.length);
+
+      // Calculate how many chars to remove from each title in this iteration
+      // We remove more from longer titles
+      const remainingToRemove = charsToRemove - charsRemoved;
+      const totalLength = truncatableTitles.reduce(
+        (sum, item) => sum + item.currentTitle.length,
+        0
+      );
+
+      for (const titleItem of truncatableTitles) {
+        if (charsRemoved >= charsToRemove) break;
+
+        // Calculate proportional removal: longer titles lose more characters
+        const proportion = titleItem.currentTitle.length / totalLength;
+        const charsToRemoveFromThis = Math.max(1, Math.ceil(remainingToRemove * proportion * 0.2)); // Remove 20% per iteration
+
+        const maxRemovable = titleItem.currentTitle.length - minTitleLength;
+        const actualRemoval = Math.min(
+          charsToRemoveFromThis,
+          maxRemovable,
+          remainingToRemove - charsRemoved
+        );
+
+        if (actualRemoval > 0) {
+          // Truncate and add ellipsis
+          const newLength = titleItem.currentTitle.length - actualRemoval;
+          titleItem.currentTitle = titleItem.originalTitle.substring(0, newLength) + ellipsis;
+          charsRemoved += actualRemoval + ellipsis.length; // Account for ellipsis length too
+        }
+      }
+    }
+
+    // Create updated products array
+    const updatedProducts = products.map((product, index) => {
+      const titleItem = titleData.find(item => item.index === index);
+      if (titleItem && titleItem.currentTitle !== titleItem.originalTitle) {
+        return { ...product, titolo: titleItem.currentTitle };
+      }
+      return product;
+    });
+
+    return updatedProducts;
+  }
+
+  /**
    * Format Top 5 Deals special post with collage image
+   * Automatically truncates titles if content exceeds Telegram's 4096 character limit
    * @param {Array} topDeals - Array of top 5 deal products
    * @param {string} collageImagePath - Path to the collage image
    * @returns {string} HTML content for the special post
    */
   formatTopDealsPost(topDeals, collageImagePath) {
+    const TELEGRAM_MAX_LENGTH = 4096;
     const parts = [];
 
     parts.push('<div class="product top-deals-post">');
@@ -276,35 +365,63 @@ class NotesGenerator {
     parts.push('  <div class="copyable-content">');
     parts.push('    <div class="text-content">');
 
-    const textLines = [];
-    textLines.push('🏆 TOP 5 DEALS - MIGLIORI SCONTI! 🏆');
-    textLines.push('');
+    // Generate text content with a helper function for reusability
+    const generateTextContent = products => {
+      const textLines = [];
+      textLines.push('🏆 TOP 5 DEALS - MIGLIORI SCONTI! 🏆');
+      textLines.push('');
 
-    // Add each product
-    topDeals.forEach((product, index) => {
-      if (product.titolo) {
-        textLines.push(`💬 ${product.titolo}`);
-      }
+      // Add each product
+      products.forEach((product, index) => {
+        if (product.titolo) {
+          textLines.push(`💬 ${product.titolo}`);
+        }
 
-      // Price information
-      if (product.prezzoScontato && product.prezzoOriginale && product.percentualeSconto) {
-        const prezzoScontato = this.formatPrice(product.prezzoScontato);
-        const prezzoOriginale = this.formatPrice(product.prezzoOriginale);
-        const sconto = this.formatDiscount(product.percentualeSconto);
-        textLines.push(`💰 A soli ${prezzoScontato}€ invece di ${prezzoOriginale}€ (-${sconto}%)`);
-      } else if (product.prezzoScontato) {
-        const prezzoScontato = this.formatPrice(product.prezzoScontato);
-        textLines.push(`💰 A soli ${prezzoScontato}€`);
-      }
+        // Price information
+        if (product.prezzoScontato && product.prezzoOriginale && product.percentualeSconto) {
+          const prezzoScontato = this.formatPrice(product.prezzoScontato);
+          const prezzoOriginale = this.formatPrice(product.prezzoOriginale);
+          const sconto = this.formatDiscount(product.percentualeSconto);
+          textLines.push(
+            `💰 A soli ${prezzoScontato}€ invece di ${prezzoOriginale}€ (-${sconto}%)`
+          );
+        } else if (product.prezzoScontato) {
+          const prezzoScontato = this.formatPrice(product.prezzoScontato);
+          textLines.push(`💰 A soli ${prezzoScontato}€`);
+        }
 
-      if (product.smartLinkURL) {
-        textLines.push(`🔗 ${product.smartLinkURL}`);
-      }
+        if (product.smartLinkURL) {
+          textLines.push(`🔗 ${product.smartLinkURL}`);
+        }
 
-      textLines.push(''); // Empty line between products
-    });
+        textLines.push(''); // Empty line between products
+      });
 
-    const textContent = textLines.join('\n');
+      return textLines.join('\n');
+    };
+
+    // Generate initial text content
+    let textContent = generateTextContent(topDeals);
+    let processedDeals = topDeals;
+
+    // Check if content exceeds Telegram limit
+    if (textContent.length > TELEGRAM_MAX_LENGTH) {
+      const charsToRemove = textContent.length - TELEGRAM_MAX_LENGTH + 50; // Extra buffer
+      console.log(
+        `⚠️  Telegram post exceeds ${TELEGRAM_MAX_LENGTH} chars (${textContent.length} chars). Truncating titles...`
+      );
+
+      // Truncate titles equitably
+      processedDeals = this.truncateTitlesEquitably(topDeals, charsToRemove);
+
+      // Regenerate text content with truncated titles
+      textContent = generateTextContent(processedDeals);
+
+      console.log(`✅ Post truncated to ${textContent.length} chars (within Telegram limit)`);
+    } else {
+      console.log(`✅ Post length: ${textContent.length} chars (within Telegram limit)`);
+    }
+
     parts.push(`      <pre>${this.escapeHtml(textContent)}</pre>`);
     parts.push(
       `      <textarea class="hidden-copy-text">${this.escapeHtml(textContent)}</textarea>`

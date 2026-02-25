@@ -212,12 +212,6 @@ class AmazonService {
       ratingCount = product.customerReviews.reviewsCount;
     }
 
-    // DEBUG: Log customer reviews structure for first few products
-    if (!rating && !ratingCount && product.customerReviews) {
-      console.log(`   ⚠️  ASIN ${product.asin}: customerReviews present but no data extracted`);
-      console.log(`      Structure:`, JSON.stringify(product.customerReviews, null, 2));
-    }
-
     // Generate affiliate links with all options
     const affiliateLinks = this.buildAffiliateLink(product.asin, options);
 
@@ -397,7 +391,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   amazonService
     .getProductDetails(testAsins)
     .then(products => {
-      console.log('\n📋 Product details:', JSON.stringify(products, null, 2));
+      console.log('\n✅ Test completed: fetched', products.length, 'products');
     })
     .catch(console.error);
 }
