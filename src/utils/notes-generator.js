@@ -4,12 +4,18 @@ import path from 'path';
 import os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 
 const execAsync = promisify(exec);
 
+// Get current file's directory (for ES modules)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 /**
- * Notes Generator - Create a single text file for Mac Notes app
- * Generates a formatted text file with all products from Excel data for social media posts
+ * Notes Generator - Create an HTML page with product deals
+ * Generates a formatted HTML page with all products from Excel data for social media posts
  * Saves to Desktop for easy access
  */
 class NotesGenerator {
@@ -17,6 +23,10 @@ class NotesGenerator {
     this.excelFilePath = excelFilePath;
     // Save to Desktop for easy user access
     this.outputDir = path.join(os.homedir(), 'Desktop');
+    // Template path
+    this.templatePath = path.join(__dirname, '../templates/product-page-template.html');
+    // Logo path (relative to the HTML file that will be on Desktop)
+    this.logoPath = path.join(__dirname, '../../assets/AppIcon.iconset/icon_512x512@2x.png');
   }
 
   /**
@@ -152,20 +162,36 @@ class NotesGenerator {
   }
 
   /**
-   * Format product data into text for Mac Notes
+   * Format product data into HTML for display
    */
   formatProductForNote(product) {
-    const lines = [];
+    const parts = [];
 
-    // Image URL
+    // Start product container
+    parts.push('<div class="product">');
+
+    // Image section - render image first, then link below
     if (product.immagineLarge) {
-      lines.push(`🖼️ IMMAGINE: ${product.immagineLarge}`);
-      lines.push('');
+      parts.push('  <div class="image-section">');
+      parts.push(
+        `    <img src="${this.escapeHtml(product.immagineLarge)}" alt="${this.escapeHtml(product.titolo || 'Prodotto')}" class="product-image">`
+      );
+      parts.push(
+        `    <a href="${this.escapeHtml(product.immagineLarge)}" target="_blank" class="image-link">🖼️ Link Immagine</a>`
+      );
+      parts.push('  </div>');
     }
+
+    // Copyable content section
+    parts.push('  <div class="copyable-content">');
+    parts.push('    <div class="text-content">');
+
+    const textLines = [];
 
     // Title
     if (product.titolo) {
-      lines.push(`💬 ${product.titolo}`);
+      textLines.push(`💬 ${product.titolo}`);
+      textLines.push(''); // Empty line after title
     }
 
     // Price information
@@ -173,30 +199,68 @@ class NotesGenerator {
       const prezzoScontato = this.formatPrice(product.prezzoScontato);
       const prezzoOriginale = this.formatPrice(product.prezzoOriginale);
       const sconto = this.formatDiscount(product.percentualeSconto);
-      lines.push(`💰 A soli ${prezzoScontato}€ invece di ${prezzoOriginale}€ (-${sconto}%)`);
+      textLines.push(`💰 A soli ${prezzoScontato}€ invece di ${prezzoOriginale}€ (-${sconto}%)`);
     } else if (product.prezzoScontato) {
       const prezzoScontato = this.formatPrice(product.prezzoScontato);
-      lines.push(`💰 A soli ${prezzoScontato}€`);
+      textLines.push(`💰 A soli ${prezzoScontato}€`);
     }
 
-    // Empty line
-    lines.push('');
+    textLines.push(''); // Empty line
 
     // Smart Link
     if (product.smartLinkURL) {
-      lines.push(`🔗 ${product.smartLinkURL}`);
+      textLines.push(`🔗 ${product.smartLinkURL}`);
+      textLines.push(''); // Empty line after link
     }
 
     // Reviews and Rating
     if (product.numeroReview && product.rating) {
       const rating = this.formatRating(product.rating);
-      lines.push(`⭐ ${product.numeroReview} Recensioni: ${rating} / 5.0`);
+      textLines.push(`⭐ ${product.numeroReview} Recensioni: ${rating} / 5.0`);
     }
 
     // Availability
-    lines.push(`🚚 Venduto e spedito da Amazon`);
+    textLines.push(`🚚 Venduto e spedito da Amazon`);
 
-    return lines.join('\n');
+    // Store text content in data attribute for copying
+    const textContent = textLines.join('\n');
+    parts.push(`      <pre>${this.escapeHtml(textContent)}</pre>`);
+    parts.push(
+      `      <textarea class="hidden-copy-text">${this.escapeHtml(textContent)}</textarea>`
+    );
+    parts.push('    </div>');
+
+    // Copy button
+    parts.push(
+      '    <button class="copy-btn" onclick="copyToClipboard(this)" title="Copia negli appunti">'
+    );
+    parts.push('      <span class="copy-icon">📋</span>');
+    parts.push('      <span class="copy-text">Copia</span>');
+    parts.push('    </button>');
+
+    parts.push('  </div>');
+
+    // Copy status badge (not copied)
+    parts.push('  <div class="copy-status-badge new">🆕 Nuova</div>');
+
+    parts.push('</div>');
+
+    return parts.join('\n');
+  }
+
+  /**
+   * Escape HTML special characters
+   */
+  escapeHtml(text) {
+    if (!text) return '';
+    const map = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#039;',
+    };
+    return text.toString().replace(/[&<>"']/g, m => map[m]);
   }
 
   /**
@@ -235,10 +299,69 @@ class NotesGenerator {
   }
 
   /**
-   * Generate single text note file with all products for a specific date
+   * Read HTML template and replace placeholders
+   */
+  async generateHTMLTemplate(title, categoryIndex, content) {
+    try {
+      // Read template file
+      let template = await fs.readFile(this.templatePath, 'utf-8');
+
+      // Replace placeholders
+      template = template.replace(/{{PAGE_TITLE}}/g, this.escapeHtml(title));
+      template = template.replace(/{{LOGO_PATH}}/g, this.logoPath);
+      template = template.replace(/{{CATEGORY_INDEX}}/g, categoryIndex);
+      template = template.replace(/{{PRODUCTS_CONTENT}}/g, content);
+
+      return template;
+    } catch (error) {
+      console.error(`❌ Error reading HTML template: ${error.message}`);
+      throw new Error(`Failed to load HTML template: ${error.message}`);
+    }
+  }
+
+  /**
+   * Generate category index HTML with anchor links
+   */
+  generateCategoryIndex(productsByCategory) {
+    if (!productsByCategory || productsByCategory.size === 0) return '';
+
+    const parts = [];
+    parts.push('<div class="category-index" id="category-index">');
+    parts.push('  <h2>📑 Indice Categorie</h2>');
+    parts.push('  <ul>');
+
+    for (const [category, products] of productsByCategory) {
+      const categoryId = this.generateCategoryId(category);
+      const count = products.length;
+      parts.push(
+        `    <li><a href="#${categoryId}">${this.escapeHtml(category)} (${count})</a></li>`
+      );
+    }
+
+    parts.push('  </ul>');
+    parts.push('</div>');
+
+    return parts.join('\n');
+  }
+
+  /**
+   * Generate a URL-safe ID from category name
+   */
+  generateCategoryId(category) {
+    return (
+      'cat-' +
+      category
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+    );
+  }
+
+  /**
+   * Generate HTML page with all products for a specific date
    */
   async generateNotesForDate(targetDate) {
-    console.log(`\n📝 Generating text note file for date: ${targetDate}`);
+    console.log(`\n📝 Generating HTML page for date: ${targetDate}`);
 
     try {
       // Read products for target date
@@ -254,9 +377,9 @@ class NotesGenerator {
       // Desktop should already exist, but ensure it does
       await fs.mkdir(this.outputDir, { recursive: true });
 
-      // Generate filename: nonnapina_DD-MM-YYYY.txt
+      // Generate filename: nonnapina_DD-MM-YYYY.html
       const dateFormatted = this.dateToSheetName(targetDate);
-      const fileName = `nonnapina_${dateFormatted}.txt`;
+      const fileName = `nonnapina_${dateFormatted}.html`;
       const filePath = path.join(this.outputDir, fileName);
 
       console.log(`📁 Output directory: ${this.outputDir}`);
@@ -274,20 +397,18 @@ class NotesGenerator {
 
       console.log(`📋 Products grouped in ${productsByCategory.size} categories`);
 
-      // Build text content with all products grouped by category
+      // Generate category index
+      const categoryIndex = this.generateCategoryIndex(productsByCategory);
+
+      // Build HTML content with all products grouped by category
       const contentParts = [];
-      let isFirstCategory = true;
 
       for (const [category, categoryProducts] of productsByCategory) {
-        // Add spacing before category (except for the first one)
-        if (!isFirstCategory) {
-          contentParts.push('\n\n');
-        }
-        isFirstCategory = false;
-
-        // Add category header in uppercase
-        contentParts.push(`━━━━━ ${category.toUpperCase()} ━━━━━`);
-        contentParts.push('');
+        const categoryId = this.generateCategoryId(category);
+        // Add category header with ID for anchor linking
+        contentParts.push(
+          `<div class="category-header" id="${categoryId}">━━━━━ ${this.escapeHtml(category.toUpperCase())} ━━━━━</div>`
+        );
 
         // Add all products in this category
         for (let i = 0; i < categoryProducts.length; i++) {
@@ -297,25 +418,27 @@ class NotesGenerator {
 
           // Add separator between products in the same category (except after the last one)
           if (i < categoryProducts.length - 1) {
-            contentParts.push('\n' + '─'.repeat(50) + '\n');
+            contentParts.push('<hr class="product-separator">');
           }
         }
       }
 
-      const finalContent = contentParts.join('\n');
+      const htmlContent = contentParts.join('\n');
+      const title = `I consigli di Nonna Pina - ${dateFormatted}`;
+      const fullHTML = await this.generateHTMLTemplate(title, categoryIndex, htmlContent);
 
-      // Write text file
-      await fs.writeFile(filePath, finalContent, 'utf-8');
+      // Write HTML file
+      await fs.writeFile(filePath, fullHTML, 'utf-8');
 
       console.log(
-        `\n✅ Successfully generated text note file with ${products.length} products in ${productsByCategory.size} categories`
+        `\n✅ Successfully generated HTML page with ${products.length} products in ${productsByCategory.size} categories`
       );
       console.log(`📁 File saved to Desktop: ${fileName}`);
 
-      // Try to open the file automatically with TextEdit (macOS only)
+      // Try to open the file automatically with default browser
       try {
-        console.log(`\n🚀 Opening file with TextEdit...`);
-        await execAsync(`open -a TextEdit "${filePath}"`);
+        console.log(`\n🚀 Opening file with default browser...`);
+        await execAsync(`open "${filePath}"`);
         console.log(`✅ File opened successfully`);
       } catch (error) {
         console.log(`ℹ️  File created but could not be opened automatically: ${error.message}`);
@@ -329,21 +452,21 @@ class NotesGenerator {
         categories: productsByCategory.size,
         outputPath: filePath,
         fileName: fileName,
-        message: `Generated note file with ${products.length} products in ${productsByCategory.size} categories`,
+        message: `Generated HTML page with ${products.length} products in ${productsByCategory.size} categories`,
       };
     } catch (error) {
-      console.error(`❌ Error generating notes: ${error.message}`);
+      console.error(`❌ Error generating HTML page: ${error.message}`);
       return {
         success: false,
         count: 0,
         error: error.message,
-        message: `Failed to generate notes: ${error.message}`,
+        message: `Failed to generate HTML page: ${error.message}`,
       };
     }
   }
 
   /**
-   * Generate text note file using configured date or today's date
+   * Generate HTML page using configured date or today's date
    */
   async generateNotes(configuredDate = '') {
     // Use configured date or today's date
@@ -351,7 +474,7 @@ class NotesGenerator {
       configuredDate && configuredDate.trim() !== '' ? configuredDate : this.getTodayDate();
 
     console.log(`\n${'═'.repeat(60)}`);
-    console.log('📝 Mac Notes File Generator');
+    console.log('📝 HTML Page Generator for Amazon Deals');
     console.log(`${'═'.repeat(60)}`);
     console.log(`📅 Target date: ${targetDate}${configuredDate ? ' (from config)' : ' (today)'}`);
 

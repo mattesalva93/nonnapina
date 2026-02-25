@@ -118,8 +118,8 @@ export async function fetchProductsAndExport() {
     console.log(`   Excel file status: ${excelStats.message}`);
     await excelHandler.appendProducts(productsWithCategory);
 
-    // Step 6.6: Generate Mac Notes files for social media posts
-    console.log('\n📋 Step 6.6: Generating Mac Notes file...');
+    // Step 6.6: Generate HTML page for social media posts
+    console.log('\n📋 Step 6.6: Generating HTML page...');
     const notesResult = await notesGenerator.generateNotes(config.notes.dateForPosts);
     if (notesResult.success) {
       console.log(`   ✅ ${notesResult.message}`);
@@ -197,7 +197,7 @@ export async function fetchProductsAndExport() {
     console.log(`📊 Excel tracker file: ./output/tracker_outcome.xlsx`);
     if (notesResult.success) {
       console.log(
-        `📝 Mac Notes file: ${notesResult.fileName} (saved on Desktop - ${notesResult.count} products)`
+        `📝 HTML page: ${notesResult.fileName} (saved on Desktop - ${notesResult.count} products)`
       );
     }
     console.log('═'.repeat(60) + '\n');

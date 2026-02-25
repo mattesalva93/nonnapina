@@ -718,6 +718,9 @@ node --version
 
 ```
 keepa_tracker/
+├── assets/                  # Risorse grafiche (icone, logo)
+│   └── AppIcon.iconset/
+│       └── icon_512x512@2x.png # Logo dell'applicazione
 ├── bin/
 │   └── run-node.sh          # Script per eseguire Node.js con nvm
 ├── docs/                    # Documentazione aggiuntiva
@@ -734,14 +737,101 @@ keepa_tracker/
 │   │   └── keepa.js         # Scraper Keepa (puppeteer-real-browser)
 │   ├── services/
 │   │   └── amazon.js        # Client Amazon Creators API
+│   ├── templates/
+│   │   └── product-page-template.html # Template HTML per pagina prodotti
 │   └── utils/
 │       ├── excel-handler.js # Gestione file Excel
-│       └── json-builder.js  # Gestione file JSON
+│       ├── json-builder.js  # Gestione file JSON
+│       └── notes-generator.js # Generatore pagine HTML interattive
 ├── .env                     # Variabili d'ambiente (NON committare!)
 ├── .env.example             # Template variabili d'ambiente
 ├── .gitignore               # File da ignorare in Git
 ├── package.json             # Dipendenze e script npm
 └── README.md                # Questa guida
+```
+
+---
+
+## 🎨 Personalizzazione Template HTML
+
+Il sistema utilizza un **template HTML separato** per generare le pagine dei prodotti, rendendolo facilmente personalizzabile.
+
+### Percorso Template
+
+Il template si trova in: `src/templates/product-page-template.html`
+
+### Come Personalizzare
+
+Il template usa **placeholder** che vengono sostituiti dinamicamente:
+
+- `{{PAGE_TITLE}}` - Titolo della pagina (es. "I consigli di Nonna Pina Deals - 25-02-2026")
+- `{{LOGO_PATH}}` - Percorso del logo in alto a sinistra
+- `{{PRODUCTS_CONTENT}}` - Contenuto HTML dei prodotti
+
+### Personalizzazioni Comuni
+
+#### 1. **Cambiare Colori**
+
+Modifica i gradienti nel CSS del template:
+
+```css
+/* Gradient principale (attualmente viola) */
+background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+
+/* Cambia con i tuoi colori preferiti, es. blu/verde: */
+background: linear-gradient(135deg, #00c6ff 0%, #0072ff 100%);
+```
+
+#### 2. **Modificare Font**
+
+Nel tag `<style>`, cerca:
+
+```css
+font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, ...;
+```
+
+Sostituisci con il tuo font preferito.
+
+#### 3. **Cambiare Logo**
+
+Il logo è caricato da: `assets/AppIcon.iconset/icon_512x512@2x.png`
+
+Per cambiare:
+
+1. Sostituisci il file PNG nella cartella `assets/AppIcon.iconset/`
+2. Oppure modifica `notes-generator.js` alla riga 23:
+
+```javascript
+this.logoPath = path.join(__dirname, '../../assets/TUO_LOGO.png');
+```
+
+#### 4. **Modificare Layout Prodotti**
+
+Modifica il metodo `formatProductForNote()` in `notes-generator.js` (linea ~155) per cambiare la struttura HTML di ogni prodotto.
+
+### Struttura Template
+
+```html
+<div class="page-header">
+  <!-- Logo e titolo -->
+</div>
+
+<div class="container">
+  <h1>{{PAGE_TITLE}}</h1>
+  <div id="products-container">
+    <!-- Categoria -->
+    <div class="category-header">...</div>
+
+    <!-- Prodotto -->
+    <div class="product">
+      <div class="image-section">...</div>
+      <div class="copyable-content">
+        <div class="text-content">...</div>
+        <button class="copy-btn">...</button>
+      </div>
+    </div>
+  </div>
+</div>
 ```
 
 ---
@@ -776,36 +866,48 @@ Dati completi in formato JSON con tutte le informazioni per ogni prodotto:
 
 ---
 
-### 3. **File di Note** (`Desktop/nonnapina_DD-MM-YYYY.txt`)
+### 3. **Pagina HTML Interattiva** (`Desktop/nonnapina_DD-MM-YYYY.html`)
 
-**🆕 Nuovo!** File di testo formattato per social media, salvato direttamente sul Desktop.
+**🆕 Nuovo!** Pagina HTML interattiva per social media, salvata direttamente sul Desktop.
 
 Caratteristiche:
 
 - 📁 **Posizione**: Desktop (facile accesso)
 - 📋 **Organizzazione**: Prodotti raggruppati per categoria
-- 🎨 **Formato**: Pronto per copiare-incollare su:
-  - 📱 Instagram (caption)
-  - 💬 Telegram (messaggi)
-  - 📲 WhatsApp
-  - 🐦 Twitter/X
+- 🎨 **Design**: Pagina web moderna e responsive con:
+  - 🖼️ **Immagini renderizzate** direttamente nella pagina
+  - 📋 **Pulsanti "Copia"** per copiare il testo negli appunti con un click
+  - 🎨 **Grafica accattivante** con gradient viola e layout pulito
+  - 📱 **Responsive** - funziona su desktop, tablet e mobile
+- 💻 **Interattività**: Ogni prodotto ha un pulsante laterale per copiare il testo formattato
+- 🔗 **Link immagine** sotto l'immagine renderizzata per accesso diretto
 
 **Contenuto per ogni prodotto**:
 
 ```
-━━━━━ CATEGORIA ━━━━━
+[IMMAGINE RENDERIZZATA]
+🖼️ Link Immagine
 
-🖼️ IMMAGINE: [URL immagine grande da scaricare]
-
-💬 [Titolo prodotto]
-💰 A soli XX€ invece di YY€ (-Z%)
-
-🔗 [Smart Link Affiliazione Amazon]
-⭐ [N] Recensioni: X.X / 5.0
-🚚 Venduto e spedito da Amazon
+━━━━━━━━━━━━━━━━━━━━━
+| 💬 [Titolo prodotto]      | [📋 Copia]
+| 💰 A soli XX€ invece di   |
+|    YY€ (-Z%)              |
+|                           |
+| 🔗 [Smart Link]           |
+| ⭐ [N] Recensioni: X.X/5.0|
+| 🚚 Venduto e spedito da   |
+|    Amazon                 |
+━━━━━━━━━━━━━━━━━━━━━
 ```
 
-**Apertura automatica**: Il file si apre automaticamente con TextEdit dopo l'estrazione.
+**Funzionalità**:
+
+- **Click su "Copia"**: Copia tutto il testo formattato negli appunti
+- **Feedback visivo**: Il pulsante diventa verde "✅ Copiato!" per 2 secondi
+- **Immagini grandi**: Le immagini dei prodotti sono visualizzate direttamente
+- **Link immagine**: Per aprire l'immagine a schermo intero
+
+**Apertura automatica**: Il file si apre automaticamente con il browser predefinito dopo la generazione.
 
 ---
 

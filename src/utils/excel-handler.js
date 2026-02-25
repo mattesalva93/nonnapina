@@ -284,7 +284,87 @@ class ExcelHandler {
   }
 
   /**
+   * Compare two product rows
+   * Returns: 'identical' | 'price-only' | 'different'
+   */
+  compareProductRows(row1, row2) {
+    // ASIN is at index 2
+    if (row1[2] !== row2[2]) {
+      return 'different'; // Different products
+    }
+
+    // Check if all fields are identical
+    let allIdentical = true;
+    let onlyPriceDifferent = true;
+
+    // Price-related fields indices
+    const priceIndices = [4, 5, 6, 7]; // Prezzo Originale, Prezzo Scontato, Importo Risparmiato, Percentuale Sconto
+
+    for (let i = 0; i < row1.length; i++) {
+      // Skip date field (index 0) for comparison
+      if (i === 0) continue;
+
+      const val1 = row1[i] === null || row1[i] === undefined ? '' : String(row1[i]);
+      const val2 = row2[i] === null || row2[i] === undefined ? '' : String(row2[i]);
+
+      if (val1 !== val2) {
+        allIdentical = false;
+        // If difference is NOT in price fields, it's a different product variant
+        if (!priceIndices.includes(i)) {
+          onlyPriceDifferent = false;
+        }
+      }
+    }
+
+    if (allIdentical) {
+      return 'identical';
+    } else if (onlyPriceDifferent) {
+      return 'price-only';
+    } else {
+      return 'different';
+    }
+  }
+
+  /**
+   * Read all existing product rows from sheet
+   */
+  readExistingRows(ws) {
+    const existingRows = [];
+
+    if (!ws || !ws['!ref']) {
+      return existingRows;
+    }
+
+    const range = XLSX.utils.decode_range(ws['!ref']);
+
+    // Start from row 3 (index 2) - skip header and empty row
+    for (let rowIndex = 2; rowIndex <= range.e.r; rowIndex++) {
+      const row = [];
+      let hasData = false;
+
+      for (let colIndex = 0; colIndex <= range.e.c; colIndex++) {
+        const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
+        const cell = ws[cellAddress];
+        const value = cell ? cell.v : '';
+        row.push(value);
+        if (value !== '' && value !== null && value !== undefined) {
+          hasData = true;
+        }
+      }
+
+      if (hasData) {
+        existingRows.push({ rowIndex, data: row });
+      }
+    }
+
+    return existingRows;
+  }
+
+  /**
    * Append products to Excel file with date-based sheet management
+   * - Skip if row is identical
+   * - Update if only price fields changed
+   * - Add new row for all other cases
    */
   async appendProducts(products) {
     console.log(`\n💾 Writing ${products.length} products to Excel...\n`);
@@ -342,38 +422,89 @@ class ExcelHandler {
       ws = this.getOrCreateSheet(wb, targetSheetName);
     }
 
-    // Get last row in target sheet
-    const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-    let lastRow = range.e.r;
-
-    // Start appending with blank row separator
-    let startRow = lastRow >= 2 ? lastRow + 2 : 3; // +2 to skip blank row
+    // Read existing rows from sheet
+    const existingRows = this.readExistingRows(ws);
+    console.log(`📊 Found ${existingRows.length} existing rows in sheet`);
 
     // Format all product rows
     const productRows = products.map(p => this.formatProductRow(p));
 
-    // Append to sheet
-    for (let i = 0; i < productRows.length; i++) {
-      const rowIndex = startRow + i;
-      for (let j = 0; j < productRows[i].length; j++) {
-        const cellAddress = XLSX.utils.encode_cell({ r: rowIndex - 1, c: j });
-        if (!ws[cellAddress]) ws[cellAddress] = {};
-        ws[cellAddress].v = productRows[i][j];
+    // Process each product row
+    let skippedCount = 0;
+    let updatedCount = 0;
+    let addedCount = 0;
+    const rowsToAdd = [];
+
+    for (const newRow of productRows) {
+      const asin = newRow[2]; // ASIN is at index 2
+
+      // Find existing row with same ASIN
+      const existingRow = existingRows.find(er => er.data[2] === asin);
+
+      if (existingRow) {
+        const comparison = this.compareProductRows(existingRow.data, newRow);
+
+        if (comparison === 'identical') {
+          // Skip - already exists with same data
+          skippedCount++;
+          console.log(`   ⏭️  Skipped (identical): ${asin}`);
+        } else if (comparison === 'price-only') {
+          // Update existing row with new price data
+          for (let colIndex = 0; colIndex < newRow.length; colIndex++) {
+            const cellAddress = XLSX.utils.encode_cell({ r: existingRow.rowIndex, c: colIndex });
+            if (!ws[cellAddress]) ws[cellAddress] = {};
+            ws[cellAddress].v = newRow[colIndex];
+          }
+          updatedCount++;
+          console.log(`   🔄 Updated (price change): ${asin}`);
+        } else {
+          // Different data (not just price) - add as new row
+          rowsToAdd.push(newRow);
+          addedCount++;
+          console.log(`   ➕ Added (data changed): ${asin}`);
+        }
+      } else {
+        // New product - add to list
+        rowsToAdd.push(newRow);
+        addedCount++;
+        console.log(`   ➕ Added (new): ${asin}`);
       }
     }
 
-    // Update range
-    const newRange = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-    newRange.e.r = Math.max(newRange.e.r, startRow + productRows.length - 2);
-    ws['!ref'] = XLSX.utils.encode_range(newRange);
+    // Append new rows if any
+    if (rowsToAdd.length > 0) {
+      // Get last row in target sheet
+      const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+      let lastRow = range.e.r;
+
+      // Start appending with blank row separator
+      let startRow = lastRow >= 2 ? lastRow + 2 : 3; // +2 to skip blank row
+
+      // Append to sheet
+      for (let i = 0; i < rowsToAdd.length; i++) {
+        const rowIndex = startRow + i;
+        for (let j = 0; j < rowsToAdd[i].length; j++) {
+          const cellAddress = XLSX.utils.encode_cell({ r: rowIndex - 1, c: j });
+          if (!ws[cellAddress]) ws[cellAddress] = {};
+          ws[cellAddress].v = rowsToAdd[i][j];
+        }
+      }
+
+      // Update range
+      const newRange = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+      newRange.e.r = Math.max(newRange.e.r, startRow + rowsToAdd.length - 2);
+      ws['!ref'] = XLSX.utils.encode_range(newRange);
+    }
 
     // Write back
     XLSX.writeFile(wb, this.filePath);
 
-    console.log(`✅ Successfully added ${productRows.length} products`);
+    console.log(`\n✅ Excel update completed:`);
+    console.log(`   ⏭️  Skipped (identical): ${skippedCount}`);
+    console.log(`   🔄 Updated (price): ${updatedCount}`);
+    console.log(`   ➕ Added (new): ${addedCount}`);
     console.log(`📝 Sheet: "${targetSheetName}"`);
     console.log(`📁 File: ${this.filePath}`);
-    console.log(`📊 Data rows in sheet: ${productRows.length}`);
   }
 
   /**
