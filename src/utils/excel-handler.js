@@ -430,44 +430,31 @@ class ExcelHandler {
     const productRows = products.map(p => this.formatProductRow(p));
 
     // Process each product row
-    let skippedCount = 0;
     let updatedCount = 0;
     let addedCount = 0;
     const rowsToAdd = [];
 
     for (const newRow of productRows) {
-      const asin = newRow[2]; // ASIN is at index 2
+      const title = newRow[3]; // Title is at index 3
+      const asin = newRow[2]; // ASIN is at index 2 (for logging)
 
-      // Find existing row with same ASIN
-      const existingRow = existingRows.find(er => er.data[2] === asin);
+      // Find existing row with same exact title
+      const existingRow = existingRows.find(er => er.data[3] === title);
 
       if (existingRow) {
-        const comparison = this.compareProductRows(existingRow.data, newRow);
-
-        if (comparison === 'identical') {
-          // Skip - already exists with same data
-          skippedCount++;
-          console.log(`   ⏭️  Skipped (identical): ${asin}`);
-        } else if (comparison === 'price-only') {
-          // Update existing row with new price data
-          for (let colIndex = 0; colIndex < newRow.length; colIndex++) {
-            const cellAddress = XLSX.utils.encode_cell({ r: existingRow.rowIndex, c: colIndex });
-            if (!ws[cellAddress]) ws[cellAddress] = {};
-            ws[cellAddress].v = newRow[colIndex];
-          }
-          updatedCount++;
-          console.log(`   🔄 Updated (price change): ${asin}`);
-        } else {
-          // Different data (not just price) - add as new row
-          rowsToAdd.push(newRow);
-          addedCount++;
-          console.log(`   ➕ Added (data changed): ${asin}`);
+        // Replace existing row with new data
+        for (let colIndex = 0; colIndex < newRow.length; colIndex++) {
+          const cellAddress = XLSX.utils.encode_cell({ r: existingRow.rowIndex, c: colIndex });
+          if (!ws[cellAddress]) ws[cellAddress] = {};
+          ws[cellAddress].v = newRow[colIndex];
         }
+        updatedCount++;
+        console.log(`   🔄 Updated (same title): ${asin} - ${title.substring(0, 50)}...`);
       } else {
         // New product - add to list
         rowsToAdd.push(newRow);
         addedCount++;
-        console.log(`   ➕ Added (new): ${asin}`);
+        console.log(`   ➕ Added (new): ${asin} - ${title.substring(0, 50)}...`);
       }
     }
 
@@ -500,8 +487,7 @@ class ExcelHandler {
     XLSX.writeFile(wb, this.filePath);
 
     console.log(`\n✅ Excel update completed:`);
-    console.log(`   ⏭️  Skipped (identical): ${skippedCount}`);
-    console.log(`   🔄 Updated (price): ${updatedCount}`);
+    console.log(`   🔄 Updated (same title): ${updatedCount}`);
     console.log(`   ➕ Added (new): ${addedCount}`);
     console.log(`📝 Sheet: "${targetSheetName}"`);
     console.log(`📁 File: ${this.filePath}`);

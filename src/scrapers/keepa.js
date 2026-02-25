@@ -613,10 +613,23 @@ export async function scrapeKeepaDeals() {
                   if (firstDiv) {
                     const fullText = firstDiv.textContent.trim();
 
-                    // Extract RATING - find any decimal number (e.g., "2.2" or "4.5")
-                    const ratingMatch = fullText.match(/(\d+[.,]\d+)/);
+                    // Extract RATING - try multiple patterns
+                    // Pattern 1: Look for "X.X su 5 stelle" or "X,X stelle"
+                    let ratingMatch = fullText.match(
+                      /(\d+[.,]\d+)\s*(?:su\s*\d+\s*)?(stelle|stars?)/i
+                    );
+
+                    // Pattern 2: If not found, look for decimal numbers NOT followed by units (cm, mm, x, etc)
+                    if (!ratingMatch) {
+                      ratingMatch = fullText.match(/(\d+[.,]\d+)(?!\s*(?:cm|mm|kg|x|×))/);
+                    }
+
                     if (ratingMatch) {
-                      data.rating = parseFloat(ratingMatch[1].replace(',', '.'));
+                      const parsedRating = parseFloat(ratingMatch[1].replace(',', '.'));
+                      // Validate rating is between 0 and 5
+                      if (parsedRating >= 0 && parsedRating <= 5) {
+                        data.rating = parsedRating;
+                      }
                     }
 
                     // Extract REVIEW COUNT - find number in parentheses: "(4 recensioni)" or "(123)"
