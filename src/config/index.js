@@ -32,6 +32,10 @@ export const config = {
   notes: {
     // Date for posts in format DD/MM/YYYY (empty string uses today's date)
     dateForPosts: process.env.DATE_FOR_POSTS || '',
+    // Number of top-rated products to feature
+    topReviewCount: parseInt(process.env.TOP_REVIEW_COUNT) || 5,
+    // Minimum number of reviews required
+    minReviews: parseInt(process.env.MIN_REVIEWS) || 10,
   },
 };
 

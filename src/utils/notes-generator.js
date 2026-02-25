@@ -6,6 +6,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { config } from '../config/index.js';
 
 const execAsync = promisify(exec);
 
@@ -358,6 +359,40 @@ class NotesGenerator {
   }
 
   /**
+   * Extract top-rated products based on rating and review count
+   * @param {Array} products - All products
+   * @param {number} topCount - Number of top products to extract
+   * @param {number} minReviews - Minimum number of reviews required
+   * @returns {Array} Top-rated products
+   */
+  extractTopReviewProducts(products, topCount, minReviews) {
+    // Filter products with minimum reviews and valid rating
+    const eligibleProducts = products.filter(product => {
+      const reviewCount = parseInt(product.numeroReview) || 0;
+      const rating = parseFloat(product.rating) || 0;
+      return reviewCount >= minReviews && rating > 0;
+    });
+
+    // Sort by rating (descending), then by review count (descending)
+    eligibleProducts.sort((a, b) => {
+      const ratingA = parseFloat(a.rating) || 0;
+      const ratingB = parseFloat(b.rating) || 0;
+
+      if (ratingB !== ratingA) {
+        return ratingB - ratingA; // Higher rating first
+      }
+
+      // If same rating, sort by number of reviews
+      const reviewsA = parseInt(a.numeroReview) || 0;
+      const reviewsB = parseInt(b.numeroReview) || 0;
+      return reviewsB - reviewsA; // More reviews first
+    });
+
+    // Return top N products
+    return eligibleProducts.slice(0, topCount);
+  }
+
+  /**
    * Generate HTML page with all products for a specific date
    */
   async generateNotesForDate(targetDate) {
@@ -385,14 +420,46 @@ class NotesGenerator {
       console.log(`📁 Output directory: ${this.outputDir}`);
       console.log(`📄 Generating file: ${fileName}`);
 
-      // Group products by category (maintaining order)
-      const productsByCategory = new Map();
+      // Extract top-rated products for special category
+      const topReviewCount = config.notes.topReviewCount;
+      const minReviews = config.notes.minReviews;
+      const topProducts = this.extractTopReviewProducts(products, topReviewCount, minReviews);
+
+      if (topProducts.length > 0) {
+        console.log(
+          `⭐ Extracted ${topProducts.length} top-rated products (min ${minReviews} reviews)`
+        );
+      }
+
+      // Create a Set of top product ASINs for easy lookup
+      const topProductAsins = new Set(topProducts.map(p => p.asin));
+
+      // Group products by category (excluding top products)
+      const regularProductsByCategory = new Map();
       for (const product of products) {
-        const category = product.categoria || 'Senza Categoria';
-        if (!productsByCategory.has(category)) {
-          productsByCategory.set(category, []);
+        // Skip products that are in top review category
+        if (topProductAsins.has(product.asin)) {
+          continue;
         }
-        productsByCategory.get(category).push(product);
+
+        const category = product.categoria || 'Senza Categoria';
+        if (!regularProductsByCategory.has(category)) {
+          regularProductsByCategory.set(category, []);
+        }
+        regularProductsByCategory.get(category).push(product);
+      }
+
+      // Build final productsByCategory map with Top Review Scores first
+      const productsByCategory = new Map();
+
+      // Add Top Review Scores category first (if there are any top products)
+      if (topProducts.length > 0) {
+        productsByCategory.set('Top Review Scores', topProducts);
+      }
+
+      // Add all other categories
+      for (const [category, categoryProducts] of regularProductsByCategory) {
+        productsByCategory.set(category, categoryProducts);
       }
 
       console.log(`📋 Products grouped in ${productsByCategory.size} categories`);
