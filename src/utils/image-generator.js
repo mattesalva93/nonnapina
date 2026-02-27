@@ -1,11 +1,11 @@
 import sharp from 'sharp';
-import https from 'https';
-import http from 'http';
+import axios from 'axios';
 import fs from 'fs/promises';
 import path from 'path';
 
 /**
  * Image Generator - Create collage images from product images
+ * Supports flexible layouts for 3-5 products
  */
 class ImageGenerator {
   constructor(outputDir = './output/assets') {
@@ -13,41 +13,39 @@ class ImageGenerator {
   }
 
   /**
-   * Download an image from a URL
+   * Download an image from a URL using axios (handles redirects reliably)
    * @param {string} url - Image URL
    * @returns {Promise<Buffer>} Image buffer
    */
   async downloadImage(url) {
-    return new Promise((resolve, reject) => {
-      const protocol = url.startsWith('https') ? https : http;
-
-      protocol
-        .get(url, response => {
-          if (response.statusCode !== 200) {
-            reject(new Error(`Failed to download image: ${response.statusCode}`));
-            return;
-          }
-
-          const chunks = [];
-          response.on('data', chunk => chunks.push(chunk));
-          response.on('end', () => resolve(Buffer.concat(chunks)));
-          response.on('error', reject);
-        })
-        .on('error', reject);
+    const response = await axios.get(url, {
+      responseType: 'arraybuffer',
+      timeout: 15000,
+      maxRedirects: 5,
     });
+    return Buffer.from(response.data);
   }
 
   /**
    * Create a collage image from product data
-   * Layout: 3 images on top row, 2 images on bottom row
-   * @param {Array<Object>} products - Array of product objects (expects 5 products)
-   * @param {string} outputFileName - Output file name (default: top-5-deals.jpg)
+   * Flexible layout: supports 3, 4, or 5 products
+   *
+   * Layouts:
+   * - 5 products: 3 on top row, 2 on bottom row (centered)
+   * - 4 products: 2 on top row, 2 on bottom row
+   * - 3 products: 3 in a single row
+   *
+   * @param {Array<Object>} products - Array of product objects (3-5 products)
+   * @param {string} outputFileName - Output file name (default: top-deals.jpg)
    * @returns {Promise<string>} Path to the generated image
    */
   async createTopDealsCollage(products, outputFileName = 'top-5-deals.jpg') {
     try {
-      if (!products || products.length !== 5) {
-        throw new Error('Exactly 5 products are required for the collage');
+      const count = products?.length;
+      if (!count || count < 3 || count > 5) {
+        throw new Error(
+          `Between 3 and 5 products are required for the collage (got ${count || 0})`
+        );
       }
 
       // Extract image URLs from products
@@ -64,7 +62,7 @@ class ImageGenerator {
       const imageBuffers = await Promise.all(
         imageUrls.map(async (url, index) => {
           try {
-            console.log(`  [${index + 1}/5] Downloading: ${url}`);
+            console.log(`  [${index + 1}/${count}] Downloading: ${url}`);
             return await this.downloadImage(url);
           } catch (error) {
             console.error(`  ❌ Failed to download image ${index + 1}: ${error.message}`);
@@ -83,10 +81,8 @@ class ImageGenerator {
       const padding = 15;
       const titleHeight = 80; // Height for title banner
 
-      // Canvas dimensions: 3 images wide for top row
-      const canvasWidth = imageWidth * 3 + padding * 4;
-      // 2 rows + title banner on top
-      const canvasHeight = titleHeight + imageHeight * 2 + padding * 3;
+      // Calculate layout based on product count
+      const layout = this.calculateLayout(count, imageWidth, imageHeight, padding, titleHeight);
 
       // Resize all images to same size
       const resizedImages = await Promise.all(
@@ -100,24 +96,12 @@ class ImageGenerator {
         )
       );
 
-      // Create composite positions for 3+2 layout (offset by title height)
-      const composites = [
-        // Top row (3 images)
-        { input: resizedImages[0], top: titleHeight + padding, left: padding },
-        { input: resizedImages[1], top: titleHeight + padding, left: padding * 2 + imageWidth },
-        { input: resizedImages[2], top: titleHeight + padding, left: padding * 3 + imageWidth * 2 },
-        // Bottom row (2 images, centered)
-        {
-          input: resizedImages[3],
-          top: titleHeight + padding * 2 + imageHeight,
-          left: padding + imageWidth / 2,
-        },
-        {
-          input: resizedImages[4],
-          top: titleHeight + padding * 2 + imageHeight,
-          left: padding * 2 + imageWidth + imageWidth / 2,
-        },
-      ];
+      // Create composite positions from layout
+      const composites = layout.positions.map((pos, i) => ({
+        input: resizedImages[i],
+        top: pos.top,
+        left: pos.left,
+      }));
 
       // Ensure output directory exists
       await fs.mkdir(this.outputDir, { recursive: true });
@@ -125,15 +109,17 @@ class ImageGenerator {
       const outputPath = path.join(this.outputDir, outputFileName);
 
       // Create SVG for title text
+      const titleText = `🏆 Top ${count} Offerte - I Consigli di Nonna Pina 🏆`;
+
       const titleSvg = `
-        <svg width="${canvasWidth}" height="${titleHeight}">
+        <svg width="${layout.canvasWidth}" height="${titleHeight}">
           <defs>
             <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
               <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
               <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
             </linearGradient>
           </defs>
-          <rect width="${canvasWidth}" height="${titleHeight}" fill="url(#gradient)"/>
+          <rect width="${layout.canvasWidth}" height="${titleHeight}" fill="url(#gradient)"/>
           <text
             x="50%"
             y="50%"
@@ -144,7 +130,7 @@ class ImageGenerator {
             font-weight="bold"
             fill="white"
             letter-spacing="1">
-            🏆 Top 5 Offerte - I Consigli di Nonna Pina 🏆
+            ${titleText}
           </text>
         </svg>
       `;
@@ -154,20 +140,8 @@ class ImageGenerator {
       // Add title to composites
       composites.unshift({ input: titleBuffer, top: 0, left: 0 });
 
-      // Create discount badge positions (3 top row, 2 bottom row)
-      const badgePositions = [
-        { top: titleHeight + padding, left: padding },
-        { top: titleHeight + padding, left: padding * 2 + imageWidth },
-        { top: titleHeight + padding, left: padding * 3 + imageWidth * 2 },
-        { top: titleHeight + padding * 2 + imageHeight, left: padding + imageWidth / 2 },
-        {
-          top: titleHeight + padding * 2 + imageHeight,
-          left: padding * 2 + imageWidth + imageWidth / 2,
-        },
-      ];
-
       // Create and add discount badges
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < count; i++) {
         if (discounts[i] > 0) {
           const badgeSize = 70;
           const badgeSvg = `
@@ -196,8 +170,8 @@ class ImageGenerator {
           // Position badge in top-right corner of each image
           composites.push({
             input: badgeBuffer,
-            top: badgePositions[i].top + 10,
-            left: badgePositions[i].left + imageWidth - badgeSize - 10,
+            top: layout.positions[i].top + 10,
+            left: layout.positions[i].left + imageWidth - badgeSize - 10,
           });
         }
       }
@@ -205,8 +179,8 @@ class ImageGenerator {
       // Create canvas and composite images
       await sharp({
         create: {
-          width: canvasWidth,
-          height: canvasHeight,
+          width: layout.canvasWidth,
+          height: layout.canvasHeight,
           channels: 4,
           background: { r: 255, g: 255, b: 255, alpha: 1 },
         },
@@ -222,6 +196,66 @@ class ImageGenerator {
     } catch (error) {
       console.error('❌ Error creating collage:', error.message);
       throw error;
+    }
+  }
+
+  /**
+   * Calculate layout positions based on number of products
+   * @param {number} count - Number of products (3-5)
+   * @param {number} imageWidth - Width of each image
+   * @param {number} imageHeight - Height of each image
+   * @param {number} padding - Padding between images
+   * @param {number} titleHeight - Height of the title banner
+   * @returns {Object} { canvasWidth, canvasHeight, positions: [{top, left}] }
+   */
+  calculateLayout(count, imageWidth, imageHeight, padding, titleHeight) {
+    if (count === 5) {
+      // 3 on top, 2 on bottom (centered)
+      const canvasWidth = imageWidth * 3 + padding * 4;
+      const canvasHeight = titleHeight + imageHeight * 2 + padding * 3;
+      return {
+        canvasWidth,
+        canvasHeight,
+        positions: [
+          // Top row (3 images)
+          { top: titleHeight + padding, left: padding },
+          { top: titleHeight + padding, left: padding * 2 + imageWidth },
+          { top: titleHeight + padding, left: padding * 3 + imageWidth * 2 },
+          // Bottom row (2 images, centered)
+          { top: titleHeight + padding * 2 + imageHeight, left: padding + imageWidth / 2 },
+          {
+            top: titleHeight + padding * 2 + imageHeight,
+            left: padding * 2 + imageWidth + imageWidth / 2,
+          },
+        ],
+      };
+    } else if (count === 4) {
+      // 2 on top, 2 on bottom
+      const canvasWidth = imageWidth * 2 + padding * 3;
+      const canvasHeight = titleHeight + imageHeight * 2 + padding * 3;
+      return {
+        canvasWidth,
+        canvasHeight,
+        positions: [
+          { top: titleHeight + padding, left: padding },
+          { top: titleHeight + padding, left: padding * 2 + imageWidth },
+          { top: titleHeight + padding * 2 + imageHeight, left: padding },
+          { top: titleHeight + padding * 2 + imageHeight, left: padding * 2 + imageWidth },
+        ],
+      };
+    } else {
+      // count === 3: single row
+      const canvasWidth = imageWidth * 3 + padding * 4;
+      const canvasHeight = titleHeight + imageHeight + padding * 2;
+      return {
+        canvasWidth,
+        canvasHeight,
+        positions: [
+          { top: titleHeight + padding, left: padding },
+          { top: titleHeight + padding, left: padding * 2 + imageWidth },
+          { top: titleHeight + padding, left: padding * 3 + imageWidth * 2 },
+        ],
+      };
     }
   }
 

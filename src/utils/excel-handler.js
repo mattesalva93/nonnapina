@@ -28,11 +28,8 @@ class ExcelHandler {
       'Features',
       'Immagine (Small)',
       'Immagine (Large)',
-      'Link Web',
-      'Link App iOS',
-      'Link App Android',
+      'Link Affiliato',
       'Link Storefront',
-      'Smart Link URL',
       'Parent ASIN',
       'Marketplace',
     ];
@@ -185,10 +182,7 @@ class ExcelHandler {
       product.image?.small || '',
       product.image?.large || '',
       product.affiliateLinks?.web || '',
-      product.affiliateLinks?.mobileAppIOS || '',
-      product.affiliateLinks?.mobileAppAndroid || '',
       product.affiliateLinks?.storefront || '',
-      product.affiliateLinks?.smartLink?.url || '',
       product.parentASIN || '',
       product.marketplace || '',
     ];
@@ -435,11 +429,11 @@ class ExcelHandler {
     const rowsToAdd = [];
 
     for (const newRow of productRows) {
-      const title = newRow[3]; // Title is at index 3
-      const asin = newRow[2]; // ASIN is at index 2 (for logging)
+      const asin = newRow[2]; // ASIN is at index 2
+      const title = newRow[3]; // Title is at index 3 (for logging)
 
-      // Find existing row with same exact title
-      const existingRow = existingRows.find(er => er.data[3] === title);
+      // Find existing row with same ASIN (more reliable than title matching)
+      const existingRow = existingRows.find(er => er.data[2] === asin);
 
       if (existingRow) {
         // Replace existing row with new data
@@ -449,7 +443,7 @@ class ExcelHandler {
           ws[cellAddress].v = newRow[colIndex];
         }
         updatedCount++;
-        console.log(`   🔄 Updated (same title): ${asin} - ${title.substring(0, 50)}...`);
+        console.log(`   🔄 Updated (same ASIN): ${asin} - ${title.substring(0, 50)}...`);
       } else {
         // New product - add to list
         rowsToAdd.push(newRow);
@@ -487,14 +481,14 @@ class ExcelHandler {
     XLSX.writeFile(wb, this.filePath);
 
     console.log(`\n✅ Excel update completed:`);
-    console.log(`   🔄 Updated (same title): ${updatedCount}`);
+    console.log(`   🔄 Updated (same ASIN): ${updatedCount}`);
     console.log(`   ➕ Added (new): ${addedCount}`);
     console.log(`📝 Sheet: "${targetSheetName}"`);
     console.log(`📁 File: ${this.filePath}`);
   }
 
   /**
-   * Get file stats
+   * Get file stats (uses latest sheet in the workbook)
    */
   async getStats() {
     const exists = await this.fileExists();
@@ -510,20 +504,23 @@ class ExcelHandler {
 
     try {
       const wb = XLSX.readFile(this.filePath);
-      const ws = wb.Sheets[this.sheetName];
+
+      // Use the last sheet in the workbook (most recent date-based sheet)
+      const lastSheetName = wb.SheetNames[wb.SheetNames.length - 1];
+      const ws = wb.Sheets[lastSheetName];
 
       if (!ws) {
         return {
-          exists: false,
+          exists: true,
           path: this.filePath,
           rows: 0,
-          message: `Sheet "${this.sheetName}" not found`,
+          message: 'No sheets found in workbook',
         };
       }
 
       const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-      const totalRows = range.e.r; // 0-indexed, so row 1 = headers, rows start at 0
-      const dataRows = Math.max(0, totalRows); // Minus header
+      const totalRows = range.e.r; // 0-indexed
+      const dataRows = Math.max(0, totalRows - 1); // Minus header + empty row
 
       return {
         exists: true,
@@ -531,7 +528,9 @@ class ExcelHandler {
         totalRows: totalRows + 1,
         dataRows: dataRows,
         headers: this.headers.length,
-        message: `File exists with ${dataRows} data rows`,
+        sheets: wb.SheetNames.length,
+        latestSheet: lastSheetName,
+        message: `File exists with ${dataRows} data rows in sheet "${lastSheetName}" (${wb.SheetNames.length} total sheets)`,
       };
     } catch (error) {
       return {

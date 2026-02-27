@@ -67,7 +67,6 @@ class AmazonService {
    * Fetch product details for multiple ASINs via Creators API
    * @param {string[]} asins - Array of ASINs
    * @param {Object} options - Link generation options
-   * @param {boolean} options.mobileApp - Open mobile app instead of browser
    * @param {string} options.storefront - Your storefront ID
    * @returns {Promise<Array>}
    */
@@ -192,24 +191,32 @@ class AmazonService {
       }
     }
 
-    // Extract rating if available (try multiple possible structures)
+    // Extract rating if available (handle both primitive and object structures)
     let rating = null;
-    if (product.customerReviews?.starRating) {
-      rating = product.customerReviews.starRating;
-    } else if (product.customerReviews?.starRating?.value) {
-      rating = product.customerReviews.starRating.value;
-    } else if (product.customerReviews?.starRating?.displayValue) {
-      rating = parseFloat(product.customerReviews.starRating.displayValue);
+    const starRating = product.customerReviews?.starRating;
+    if (starRating != null) {
+      if (typeof starRating === 'number') {
+        rating = starRating;
+      } else if (typeof starRating === 'object') {
+        rating =
+          starRating.value ??
+          (starRating.displayValue ? parseFloat(starRating.displayValue) : null);
+      } else if (typeof starRating === 'string') {
+        rating = parseFloat(starRating) || null;
+      }
     }
 
-    // Extract rating count if available (try multiple possible structures)
+    // Extract rating count if available (handle both primitive and object structures)
     let ratingCount = null;
-    if (product.customerReviews?.count) {
-      ratingCount = product.customerReviews.count;
-    } else if (product.customerReviews?.count?.value) {
-      ratingCount = product.customerReviews.count.value;
-    } else if (product.customerReviews?.reviewsCount) {
-      ratingCount = product.customerReviews.reviewsCount;
+    const reviewCount = product.customerReviews?.count ?? product.customerReviews?.reviewsCount;
+    if (reviewCount != null) {
+      if (typeof reviewCount === 'number') {
+        ratingCount = reviewCount;
+      } else if (typeof reviewCount === 'object') {
+        ratingCount = reviewCount.value ?? reviewCount.displayValue ?? null;
+      } else if (typeof reviewCount === 'string') {
+        ratingCount = parseInt(reviewCount, 10) || null;
+      }
     }
 
     // Generate affiliate links with all options
@@ -262,46 +269,50 @@ class AmazonService {
   }
 
   /**
-   * Build affiliate link from ASIN with advanced options
+   * Build affiliate link from ASIN with optimized structure
+   *
+   * DEEP LINKING NOTE:
+   * Amazon handles deep linking natively via iOS Universal Links and Android App Links.
+   * A standard HTTPS link to amazon.it is automatically intercepted by the Amazon app
+   * (if installed) on both iOS and Android — no custom schemes (amazon://, amzn://) needed.
+   * This is the officially recommended approach by Amazon.
+   *
    * @param {string} asin - Product ASIN
    * @param {Object} options - Link generation options
-   * @param {boolean} options.mobileApp - Open mobile app instead of browser (deep link)
    * @param {string} options.storefront - Your storefront ID to show in storefront mode
    * @param {string} options.ref - Custom reference tag for tracking
-   * @returns {Object} - Object with different link formats
+   * @returns {Object} - Object with link formats: { web, storefront }
    */
   buildAffiliateLink(asin, options = {}) {
     const marketplace = config.amazon.marketplace.toLowerCase();
     const baseUrl = `https://www.amazon.${marketplace}`;
     const partnerTag = config.amazon.partnerTag;
+    const language = this.getMarketplaceLanguage();
 
     const links = {
-      // Standard affiliate link for desktop/web
-      web: this.buildWebLink(baseUrl, asin, partnerTag, options.ref),
-
-      // Mobile app deep link (iOS)
-      mobileAppIOS: this.buildIOSDeepLink(asin, partnerTag, options.storefront),
-
-      // Mobile app deep link (Android)
-      mobileAppAndroid: this.buildAndroidDeepLink(asin, partnerTag, options.storefront),
+      // Universal affiliate link — works as deep link on iOS/Android (app opens automatically)
+      web: this.buildWebLink(baseUrl, asin, partnerTag, language, options.ref),
 
       // Storefront link (if storefront ID provided)
       storefront: options.storefront
         ? this.buildStorefrontLink(baseUrl, asin, options.storefront, partnerTag)
         : null,
-
-      // Smart link that detects device and opens app on mobile
-      smartLink: this.buildSmartLink(baseUrl, asin, partnerTag, options.storefront),
     };
 
     return links;
   }
 
   /**
-   * Build standard web affiliate link
+   * Build optimized web affiliate link
+   * Format: https://www.amazon.it/dp/{ASIN}/?tag={tag}&linkCode=ll1&language=it_IT
+   *
+   * - tag: affiliate partner tag (required)
+   * - linkCode: identifies link source (ll1 = text link from Link Builder)
+   * - language: forces page language for consistent user experience
+   * - ref: optional custom tracking reference
    */
-  buildWebLink(baseUrl, asin, partnerTag, ref = null) {
-    let url = `${baseUrl}/dp/${asin}?tag=${partnerTag}`;
+  buildWebLink(baseUrl, asin, partnerTag, language, ref = null) {
+    let url = `${baseUrl}/dp/${asin}/?tag=${partnerTag}&linkCode=ll1&language=${language}`;
     if (ref) {
       url += `&ref=${encodeURIComponent(ref)}`;
     }
@@ -309,58 +320,25 @@ class AmazonService {
   }
 
   /**
-   * Build iOS deep link for Amazon app
-   * Deep links for Amazon app on iOS
+   * Get marketplace language code for URL parameter
    */
-  buildIOSDeepLink(asin, partnerTag, storefrontId = null) {
-    // iOS deep link format for Amazon app
-    // amzn://musthave/B0DHRQ2XGJ - opens to product directly
-    if (storefrontId) {
-      // If storefront is provided, open storefront with this product highlighted
-      return `amazon://${storefrontId}?dp=${asin}&tag=${partnerTag}`;
-    }
-    return `amazon://musthave/${asin}?tag=${partnerTag}`;
-  }
-
-  /**
-   * Build Android deep link for Amazon app
-   */
-  buildAndroidDeepLink(asin, partnerTag, storefrontId = null) {
-    // Android deep link format for Amazon app
-    if (storefrontId) {
-      return `amzn://amazon.com/store/${storefrontId}?dp=${asin}&tag=${partnerTag}`;
-    }
-    return `amzn://amazon.com/gp/product/${asin}?tag=${partnerTag}`;
+  getMarketplaceLanguage() {
+    const languageMap = {
+      IT: 'it_IT',
+      US: 'en_US',
+      UK: 'en_GB',
+      DE: 'de_DE',
+      FR: 'fr_FR',
+      ES: 'es_ES',
+    };
+    return languageMap[this.marketplace] || languageMap.IT;
   }
 
   /**
    * Build storefront link - redirect to your storefront with this product promoted
    */
   buildStorefrontLink(baseUrl, asin, storefrontId, partnerTag) {
-    // Storefront link format: Shows your store with this product as primary
-    // amazon.it/services/storefront?storefront_id=XXX&asins=B0DHRQ2XGJ
     return `${baseUrl}/services/storefront?storefront_id=${storefrontId}&asins=${asin}&tag=${partnerTag}`;
-  }
-
-  /**
-   * Build smart link that detects device
-   * This returns a regular web link with JavaScript that detects mobile and redirects to app
-   */
-  buildSmartLink(baseUrl, asin, partnerTag, storefrontId = null) {
-    // The smart link is actually a web link with redirect logic
-    // It should be hosted on your server to detect device and redirect
-    // For now, return web link with a note that this needs server-side logic
-
-    const webLink = this.buildWebLink(baseUrl, asin, partnerTag, 'smart-link');
-    const deepLinkIOS = this.buildIOSDeepLink(asin, partnerTag, storefrontId);
-    const deepLinkAndroid = this.buildAndroidDeepLink(asin, partnerTag, storefrontId);
-
-    return {
-      url: webLink,
-      fallbackIOS: deepLinkIOS,
-      fallbackAndroid: deepLinkAndroid,
-      description: 'Use this with a redirect service that detects device and opens app on mobile',
-    };
   }
 
   /**

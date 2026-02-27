@@ -74,9 +74,7 @@ export async function fetchProductsAndExport() {
     }
 
     console.log('  ✅ Link types to generate:');
-    console.log('     - Web (standard affiliate link)');
-    console.log('     - Mobile App iOS (deep link)');
-    console.log('     - Mobile App Android (deep link)');
+    console.log('     - Link Affiliato (universal deep link, apre app se installata)');
     if (config.amazon.storefrontId) {
       console.log('     - Storefront (redirect to your store)');
     }
@@ -143,11 +141,8 @@ export async function fetchProductsAndExport() {
         : 'N/A',
       categoryBreakdown: {},
       linkTypes: {
-        web: '✅ All products',
-        mobileAppIOS: '✅ All products',
-        mobileAppAndroid: '✅ All products',
+        linkAffiliato: '✅ All products (universal deep link)',
         storefront: config.amazon.storefrontId ? '✅ All products' : '❌ Not configured',
-        smartLink: '✅ All products',
       },
     };
 
@@ -185,7 +180,7 @@ export async function fetchProductsAndExport() {
     console.log(`  - Media: image (small & large URLs)`);
     console.log(`  - Features: itemInfo features array`);
     console.log(
-      `  - Affiliate Links: web, mobileAppIOS, mobileAppAndroid, storefront (if configured), smartLink`
+      `  - Affiliate Links: linkAffiliato (universal deep link), storefront (if configured)`
     );
     console.log(`  - Raw Data: Complete API response for custom filtering`);
     console.log(`  - Metadata: category, fetchedAt, marketplace`);

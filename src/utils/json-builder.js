@@ -33,32 +33,50 @@ export async function loadFromJSON(filePath) {
     const data = await fs.readFile(filePath, 'utf-8');
     return JSON.parse(data);
   } catch (error) {
-    // File doesn't exist or invalid JSON
+    if (error.code === 'ENOENT') {
+      // File doesn't exist — this is expected on first run
+      console.log(`ℹ️  File not found: ${filePath} (will be created)`);
+      return [];
+    }
+    // Invalid JSON or other read error — warn loudly
+    console.error(`⚠️  Error reading ${filePath}: ${error.message}`);
+    console.error('   The file may be corrupted. Returning empty array.');
     return [];
   }
 }
 
 /**
- * Save ASINs organized by category to JSON file
- * @param {Object} asinsByCategory - Object with category names as keys and ASIN arrays as values
+ * Save ASINs / products to JSON file
+ * Accepts both an array of products or an object keyed by category.
+ * @param {Array|Object} data - Products array or object with category keys and ASIN arrays as values
  * @param {string} filePath - Output file path
  */
-export async function saveASINsToJSON(asinsByCategory, filePath) {
+export async function saveASINsToJSON(data, filePath) {
   try {
     // Ensure output directory exists
     const dir = path.dirname(filePath);
     await fs.mkdir(dir, { recursive: true });
 
     // Write JSON file
-    await fs.writeFile(filePath, JSON.stringify(asinsByCategory, null, 2), 'utf-8');
+    await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
 
-    const totalAsins = Object.values(asinsByCategory).reduce((sum, arr) => sum + arr.length, 0);
-    console.log(
-      `\n💾 Saved ${totalAsins} ASINs organized by ${Object.keys(asinsByCategory).length} categories to ${filePath}`
-    );
+    // Smart count: handle both array and object structures
+    let count;
+    if (Array.isArray(data)) {
+      count = data.length;
+      console.log(`\n💾 Saved ${count} products to ${filePath}`);
+    } else {
+      count = Object.values(data).reduce(
+        (sum, arr) => sum + (Array.isArray(arr) ? arr.length : 1),
+        0
+      );
+      console.log(
+        `\n💾 Saved ${count} ASINs organized by ${Object.keys(data).length} categories to ${filePath}`
+      );
+    }
     return true;
   } catch (error) {
-    console.error('❌ Error saving ASINs JSON:', error.message);
+    console.error('❌ Error saving JSON:', error.message);
     return false;
   }
 }

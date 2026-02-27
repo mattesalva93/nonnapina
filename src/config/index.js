@@ -23,8 +23,6 @@ export const config = {
   },
 
   linkGeneration: {
-    // If true, generates iOS/Android deep links for app
-    includeDeepLinks: process.env.INCLUDE_DEEP_LINKS !== 'false',
     // If true, generates storefront links (requires AMAZON_STOREFRONT_ID)
     includeStorefrontLinks: process.env.INCLUDE_STOREFRONT_LINKS === 'true',
   },

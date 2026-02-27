@@ -7,6 +7,33 @@ import { config } from '../config/index.js';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
+ * Retry a function with exponential backoff
+ * @param {Function} fn - Async function to retry
+ * @param {Object} options - Options
+ * @param {number} options.retries - Max retry attempts (default: 3)
+ * @param {number} options.baseDelay - Base delay in ms (default: 2000)
+ * @param {string} options.label - Label for logging (default: 'operation')
+ * @returns {Promise<*>} Result of fn
+ */
+async function withRetry(fn, { retries = 3, baseDelay = 2000, label = 'operation' } = {}) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (attempt === retries) {
+        console.error(`   ❌ ${label} failed after ${retries} attempts: ${error.message}`);
+        throw error;
+      }
+      const waitMs = baseDelay * Math.pow(2, attempt - 1);
+      console.warn(
+        `   ⚠️  ${label} attempt ${attempt}/${retries} failed: ${error.message}. Retrying in ${waitMs / 1000}s...`
+      );
+      await delay(waitMs);
+    }
+  }
+}
+
+/**
  * Category mapping for Keepa (Amazon.it)
  * Format: Keepa Category ID: 'Category Name'
  */
@@ -83,10 +110,10 @@ export async function scrapeKeepaDeals() {
     // Navigate to base Keepa site
     console.log('\n🛒 Navigating to Keepa homepage...');
     try {
-      await page.goto('https://keepa.com/', {
-        waitUntil: 'networkidle2',
-        timeout: 30000,
-      });
+      await withRetry(
+        () => page.goto('https://keepa.com/', { waitUntil: 'networkidle2', timeout: 30000 }),
+        { retries: 3, baseDelay: 3000, label: 'Keepa homepage navigation' }
+      );
       console.log('   ✅ Keepa homepage loaded');
     } catch (error) {
       console.warn(`   ⚠️  Navigation error: ${error.message}`);
@@ -150,10 +177,10 @@ export async function scrapeKeepaDeals() {
     // Navigate to deals page
     console.log('\n🛒 Navigating to Deals page...');
     try {
-      await page.goto('https://keepa.com/#!deals', {
-        waitUntil: 'networkidle2',
-        timeout: 60000,
-      });
+      await withRetry(
+        () => page.goto('https://keepa.com/#!deals', { waitUntil: 'networkidle2', timeout: 60000 }),
+        { retries: 3, baseDelay: 5000, label: 'Deals page navigation' }
+      );
       page.mouse.move(423, 354);
       page.mouse.move(320, 530);
 
@@ -720,9 +747,12 @@ export async function scrapeKeepaDeals() {
 
     console.log(`\n🎉 Total products scraped: ${allProducts.length}`);
 
-    // Keep browser open for 10 seconds so user can see results
-    console.log('\n⏳ Keeping browser open for 10 seconds...');
-    await delay(10000);
+    // Keep browser open briefly so user can see results (configurable)
+    const keepOpenMs = parseInt(process.env.BROWSER_KEEP_OPEN_MS ?? '3000', 10);
+    if (keepOpenMs > 0) {
+      console.log(`\n⏳ Keeping browser open for ${keepOpenMs / 1000} seconds...`);
+      await delay(keepOpenMs);
+    }
 
     await browser.close();
     return allProducts;
@@ -731,8 +761,13 @@ export async function scrapeKeepaDeals() {
     console.error('Stack trace:', error.stack);
 
     if (browser) {
-      console.log('\n⏳ Keeping browser open for 10 seconds so you can see what happened...');
-      await new Promise(resolve => setTimeout(resolve, 10000));
+      const keepOpenMs = parseInt(process.env.BROWSER_KEEP_OPEN_MS ?? '3000', 10);
+      if (keepOpenMs > 0) {
+        console.log(
+          `\n⏳ Keeping browser open for ${keepOpenMs / 1000} seconds so you can see what happened...`
+        );
+        await new Promise(resolve => setTimeout(resolve, keepOpenMs));
+      }
       await browser.close();
     }
 

@@ -27,10 +27,25 @@ class NotesGenerator {
     this.outputDir = path.join(os.homedir(), 'Desktop');
     // Template path
     this.templatePath = path.join(__dirname, '../templates/product-page-template.html');
-    // Logo path (relative to the HTML file that will be on Desktop)
-    this.logoPath = path.join(__dirname, '../../assets/AppIcon.iconset/icon_512x512@2x.png');
+    // Logo source path (will be embedded as base64 in the HTML)
+    this.logoSourcePath = path.join(__dirname, '../../assets/AppIcon.iconset/icon_512x512@2x.png');
     // Image generator for creating collages
     this.imageGenerator = new ImageGenerator();
+  }
+
+  /**
+   * Read logo file and return as base64 data URI for HTML embedding
+   * Falls back to empty string if logo file not found
+   */
+  async getLogoDataUri() {
+    try {
+      const logoBuffer = await fs.readFile(this.logoSourcePath);
+      const base64 = logoBuffer.toString('base64');
+      return `data:image/png;base64,${base64}`;
+    } catch (error) {
+      console.warn(`⚠️  Logo file not found: ${this.logoSourcePath}`);
+      return '';
+    }
   }
 
   /**
@@ -79,11 +94,8 @@ class NotesGenerator {
       Features: 'features',
       'Immagine (Small)': 'immagineSmall',
       'Immagine (Large)': 'immagineLarge',
-      'Link Web': 'linkWeb',
-      'Link App iOS': 'linkAppIOS',
-      'Link App Android': 'linkAppAndroid',
+      'Link Affiliato': 'linkAffiliato',
       'Link Storefront': 'linkStorefront',
-      'Smart Link URL': 'smartLinkURL',
       'Parent ASIN': 'parentASIN',
       Marketplace: 'marketplace',
     };
@@ -211,9 +223,9 @@ class NotesGenerator {
 
     textLines.push(''); // Empty line
 
-    // Smart Link
-    if (product.smartLinkURL) {
-      textLines.push(`🔗 ${product.smartLinkURL}`);
+    // Smart Link (universal deep link)
+    if (product.linkAffiliato) {
+      textLines.push(`🔗 ${product.linkAffiliato}`);
       textLines.push(''); // Empty line after link
     }
 
@@ -229,9 +241,8 @@ class NotesGenerator {
     // Store text content in data attribute for copying
     const textContent = textLines.join('\n');
     parts.push(`      <pre>${this.escapeHtml(textContent)}</pre>`);
-    parts.push(
-      `      <textarea class="hidden-copy-text">${this.escapeHtml(textContent)}</textarea>`
-    );
+    // Textarea uses raw text (not escaped) so copy-paste preserves original characters
+    parts.push(`      <textarea class="hidden-copy-text">${textContent}</textarea>`);
     parts.push('    </div>');
 
     // Copy button
@@ -390,8 +401,8 @@ class NotesGenerator {
           textLines.push(`💰 A soli ${prezzoScontato}€`);
         }
 
-        if (product.smartLinkURL) {
-          textLines.push(`🔗 ${product.smartLinkURL}`);
+        if (product.linkAffiliato) {
+          textLines.push(`🔗 ${product.linkAffiliato}`);
         }
 
         textLines.push(''); // Empty line between products
@@ -423,9 +434,8 @@ class NotesGenerator {
     }
 
     parts.push(`      <pre>${this.escapeHtml(textContent)}</pre>`);
-    parts.push(
-      `      <textarea class="hidden-copy-text">${this.escapeHtml(textContent)}</textarea>`
-    );
+    // Textarea uses raw text (not escaped) so copy-paste preserves original characters
+    parts.push(`      <textarea class="hidden-copy-text">${textContent}</textarea>`);
     parts.push('    </div>');
 
     // Copy button
@@ -504,9 +514,12 @@ class NotesGenerator {
       // Read template file
       let template = await fs.readFile(this.templatePath, 'utf-8');
 
+      // Get logo as base64 data URI (self-contained, works from any location)
+      const logoDataUri = await this.getLogoDataUri();
+
       // Replace placeholders
       template = template.replace(/{{PAGE_TITLE}}/g, this.escapeHtml(title));
-      template = template.replace(/{{LOGO_PATH}}/g, this.logoPath);
+      template = template.replace(/{{LOGO_PATH}}/g, logoDataUri);
       template = template.replace(/{{CATEGORY_INDEX}}/g, categoryIndex);
       template = template.replace(/{{PRODUCTS_CONTENT}}/g, content);
 
@@ -659,17 +672,17 @@ class NotesGenerator {
       if (topDeals.length > 0) {
         console.log(`💰 Extracted ${topDeals.length} top deals by discount percentage`);
 
-        // Generate collage image for top deals
-        if (topDeals.length === topDealsCount) {
+        // Generate collage image for top deals (supports 3-5 products)
+        if (topDeals.length >= 3 && topDeals.length <= 5) {
           try {
             await this.imageGenerator.createTopDealsCollage(topDeals);
             console.log('✅ Top deals collage created successfully');
           } catch (error) {
             console.error('❌ Failed to create top deals collage:', error.message);
           }
-        } else {
+        } else if (topDeals.length < 3) {
           console.warn(
-            `⚠️  Not enough products for collage (found ${topDeals.length}, need ${topDealsCount})`
+            `⚠️  Not enough products for collage (found ${topDeals.length}, need at least 3)`
           );
         }
       }
