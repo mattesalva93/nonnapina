@@ -1,5 +1,7 @@
 import { connect } from 'puppeteer-real-browser';
 import { config } from '../config/index.js';
+import fs from 'fs/promises';
+import path from 'path';
 
 /**
  * Helper function to wait/delay
@@ -65,7 +67,122 @@ const CATEGORY_NAMES = {
   25: 'Sport e tempo libero',
   26: 'Strumenti musicali',
   27: 'Videogiochi',
+  28: 'Amazon Luxury',
 };
+
+/**
+ * Path for missing categories output file
+ */
+const MISSING_CATEGORIES_FILE = './output/missing-categories.json';
+
+/**
+ * Detects categories visible on the Keepa deals page that are NOT present
+ * in the CATEGORY_NAMES mapping. Saves/merges them into a JSON file so they
+ * can be easily added to the codebase later.
+ *
+ * @param {import('puppeteer-real-browser').Page} page - Puppeteer page instance
+ */
+async function detectMissingCategories(page) {
+  try {
+    // Extract category names from the Keepa deals page.
+    // On this page, real deal-categories are rendered as <a> tags whose text
+    // follows the pattern:  "Category Name (count)"  e.g. "Elettronica (520)".
+    // We use this pattern to reliably distinguish them from navigation links.
+    const pageCategories = await page.evaluate(() => {
+      const results = [];
+      const seen = new Set();
+
+      // Regex: one or more words, then a space, then (number)
+      const categoryPattern = /^(.+?)\s*\((\d+)\)$/;
+
+      const links = Array.from(document.querySelectorAll('a'));
+
+      for (const link of links) {
+        const text = link.textContent?.trim();
+        if (!text) continue;
+
+        const match = text.match(categoryPattern);
+        if (match) {
+          const name = match[1].trim();
+          const count = parseInt(match[2], 10);
+          const key = name.toLowerCase();
+
+          // Skip "?" or very short meaningless entries
+          if (name.length < 2 || name === '?') continue;
+
+          if (!seen.has(key)) {
+            seen.add(key);
+            results.push({ name, count });
+          }
+        }
+      }
+
+      return results;
+    });
+
+    console.log(`   📋 Found ${pageCategories.length} deal categories on the page`);
+
+    // Get existing known category names (values of CATEGORY_NAMES)
+    const knownCategoryNames = Object.values(CATEGORY_NAMES).map(n => n.toLowerCase().trim());
+
+    // Find categories on the page that are NOT in our mapping
+    const missingCategories = pageCategories.filter(
+      cat => !knownCategoryNames.includes(cat.name.toLowerCase().trim())
+    );
+
+    if (missingCategories.length === 0) {
+      console.log('   ✅ All page categories are already mapped — no missing categories found');
+      return;
+    }
+
+    console.log(`   ⚠️  Found ${missingCategories.length} missing categories:`);
+    for (const cat of missingCategories) {
+      console.log(`      - ${cat.name} (${cat.count} deals)`);
+    }
+
+    // Build the JSON structure: read existing file (if present) and merge
+    let existingData = {};
+    try {
+      const raw = await fs.readFile(MISSING_CATEGORIES_FILE, 'utf-8');
+      existingData = JSON.parse(raw);
+    } catch {
+      // File does not exist yet — will be created
+    }
+
+    // Determine the next available ID (max of existing CATEGORY_NAMES + existing file keys + 1)
+    const allExistingIds = [
+      ...Object.keys(CATEGORY_NAMES).map(Number),
+      ...Object.keys(existingData).map(Number),
+    ];
+    let nextId = Math.max(...allExistingIds, 0) + 1;
+
+    // Values already recorded in the file (avoid duplicates)
+    const alreadyRecordedNames = Object.values(existingData).map(n => n.toLowerCase().trim());
+
+    let added = 0;
+    for (const cat of missingCategories) {
+      if (!alreadyRecordedNames.includes(cat.name.toLowerCase().trim())) {
+        existingData[nextId] = cat.name;
+        nextId++;
+        added++;
+      }
+    }
+
+    if (added === 0) {
+      console.log('   ℹ️  All missing categories were already recorded in the file');
+      return;
+    }
+
+    // Ensure output directory exists
+    await fs.mkdir(path.dirname(MISSING_CATEGORIES_FILE), { recursive: true });
+
+    // Write file
+    await fs.writeFile(MISSING_CATEGORIES_FILE, JSON.stringify(existingData, null, 2), 'utf-8');
+    console.log(`   💾 Saved ${added} new missing categories to ${MISSING_CATEGORIES_FILE}`);
+  } catch (error) {
+    console.error(`   ❌ Error detecting missing categories: ${error.message}`);
+  }
+}
 
 /**
  * Scrapes ASINs from Keepa deals page using puppeteer-real-browser
@@ -418,6 +535,10 @@ export async function scrapeKeepaDeals() {
     //   };
     // });
     // console.log('   Debug info:', JSON.stringify(pageDebug, null, 2));
+
+    // Detect missing categories not present in CATEGORY_NAMES
+    console.log('\n🔎 Checking for missing categories on the page...');
+    await detectMissingCategories(page);
 
     // Navigate to each category and extract products
     console.log('\n🔍 Navigating through selected categories...');

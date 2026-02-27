@@ -324,6 +324,7 @@ Keepa organizza i prodotti Amazon in categorie. Puoi selezionare quali categorie
 | 25  | Sport e tempo libero               |
 | 26  | Strumenti musicali                 |
 | 27  | Videogiochi                        |
+| 28  | Amazon Luxury                      |
 
 #### Configurazione:
 
