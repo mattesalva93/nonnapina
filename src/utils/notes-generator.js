@@ -1,4 +1,4 @@
-import XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
@@ -127,7 +127,8 @@ class NotesGenerator {
   async readProductsForDate(targetDate) {
     try {
       // Read Excel file
-      const wb = XLSX.readFile(this.excelFilePath);
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.readFile(this.excelFilePath);
       const sheetName = this.dateToSheetName(targetDate);
 
       if (!sheetName) {
@@ -135,14 +136,22 @@ class NotesGenerator {
       }
 
       // Check if sheet exists
-      if (!wb.Sheets[sheetName]) {
+      const ws = wb.getWorksheet(sheetName);
+      if (!ws) {
         throw new Error(`Sheet "${sheetName}" not found in Excel file`);
       }
 
-      const ws = wb.Sheets[sheetName];
-
       // Convert sheet to array of arrays
-      const data = XLSX.utils.sheet_to_json(ws, { header: 1 });
+      const data = [];
+      ws.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+        const rowValues = [];
+        row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+          // Ensure array is padded to correct index
+          while (rowValues.length < colNumber - 1) rowValues.push(undefined);
+          rowValues.push(cell.value);
+        });
+        data.push(rowValues);
+      });
 
       if (data.length < 3) {
         // No data rows (only headers and empty row)

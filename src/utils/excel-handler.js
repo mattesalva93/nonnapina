@@ -1,9 +1,10 @@
-import XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import fs from 'fs/promises';
 import path from 'path';
 
 /**
  * Excel Handler - Manage tracker_outcome Excel file
+ * Uses ExcelJS instead of xlsx for security (no known vulnerabilities)
  */
 class ExcelHandler {
   constructor(filePath = './output/tracker_outcome.xlsx') {
@@ -33,6 +34,30 @@ class ExcelHandler {
       'Parent ASIN',
       'Marketplace',
     ];
+
+    // Header style definition
+    this.headerStyle = {
+      fill: {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFFFFF00' }, // Yellow
+      },
+      font: {
+        bold: true,
+        color: { argb: 'FF000000' },
+      },
+      alignment: {
+        horizontal: 'center',
+        vertical: 'middle',
+        wrapText: true,
+      },
+      border: {
+        top: { style: 'thin' },
+        bottom: { style: 'thin' },
+        left: { style: 'thin' },
+        right: { style: 'thin' },
+      },
+    };
   }
 
   /**
@@ -45,6 +70,24 @@ class ExcelHandler {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Apply header styling to a worksheet's first row
+   */
+  applyHeaderStyle(ws) {
+    const headerRow = ws.getRow(1);
+    headerRow.eachCell(cell => {
+      cell.fill = this.headerStyle.fill;
+      cell.font = this.headerStyle.font;
+      cell.alignment = this.headerStyle.alignment;
+      cell.border = this.headerStyle.border;
+    });
+
+    // Set column widths
+    ws.columns.forEach(col => {
+      col.width = 32;
+    });
   }
 
   /**
@@ -65,57 +108,23 @@ class ExcelHandler {
     console.log(`📄 First sheet: ${sheetName}`);
 
     // Create workbook and sheet
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet([
-      this.headers, // Row 1: Headers
-      [], // Row 2: Empty (space between headers and data)
-    ]);
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet(sheetName);
 
-    // Set column widths (doubled)
-    const colWidths = Array(this.headers.length).fill({ wch: 32 });
-    ws['!cols'] = colWidths;
+    // Add header row (row 1)
+    ws.addRow(this.headers);
 
-    // Apply yellow fill color to header cells (Row 1)
-    for (let i = 0; i < this.headers.length; i++) {
-      const cellAddress = XLSX.utils.encode_cell({ r: 0, c: i });
+    // Add empty row (row 2) - space between headers and data
+    ws.addRow([]);
 
-      // Get or create cell (aoa_to_sheet should have already created it)
-      const cellValue = ws[cellAddress]?.v || this.headers[i];
-
-      // Apply styling with indexed yellow color (5) and explicit cell value
-      ws[cellAddress] = {
-        v: cellValue,
-        s: {
-          fill: {
-            patternType: 'solid',
-            fgColor: { indexed: 5 }, // Indexed yellow (works reliably with XLSX)
-          },
-          font: {
-            bold: true,
-            color: { rgb: '000000' },
-          },
-          alignment: {
-            horizontal: 'center',
-            vertical: 'center',
-            wrapText: true,
-          },
-          border: {
-            top: { style: 'thin' },
-            bottom: { style: 'thin' },
-            left: { style: 'thin' },
-            right: { style: 'thin' },
-          },
-        },
-      };
-    }
-
-    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    // Apply header styling
+    this.applyHeaderStyle(ws);
 
     // Ensure directory exists
     const dir = path.dirname(this.filePath);
     await fs.mkdir(dir, { recursive: true });
 
-    XLSX.writeFile(wb, this.filePath);
+    await wb.xlsx.writeFile(this.filePath);
     console.log(
       `✅ Excel file created with sheet: "${sheetName}" (first data row starts at row 3)`
     );
@@ -124,18 +133,17 @@ class ExcelHandler {
   }
 
   /**
-   * Get last row index (last row with data)
+   * Get last row index (last row with data) - returns 0-based index for compatibility
    */
   async getLastRowIndex() {
     try {
-      const wb = XLSX.readFile(this.filePath);
-      const ws = wb.Sheets[this.sheetName];
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.readFile(this.filePath);
+      const ws = wb.getWorksheet(this.sheetName);
 
       if (!ws) return 2; // After row 1 (headers), row 2 (empty)
 
-      // Find last used row
-      const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-      return range.e.r; // Last used row
+      return ws.rowCount - 1; // Convert to 0-based
     } catch (error) {
       console.error('Error reading Excel file:', error.message);
       return 2; // Default to row 2
@@ -193,16 +201,15 @@ class ExcelHandler {
    */
   getLastFetchDate(ws) {
     try {
-      const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+      const rowCount = ws.rowCount;
 
-      // Start from row 3 (skipping headers and empty row)
-      for (let row = range.e.r; row >= 2; row--) {
-        const cellAddress = XLSX.utils.encode_cell({ r: row, c: 0 });
-        const cellValue = ws[cellAddress]?.v;
+      // Start from last row, go backwards (skipping headers row 1 and empty row 2)
+      for (let row = rowCount; row >= 3; row--) {
+        const cellValue = ws.getRow(row).getCell(1).value;
 
-        if (cellValue && cellValue.trim() !== '') {
+        if (cellValue && String(cellValue).trim() !== '') {
           // Extract date part (DD/MM/YYYY) from "DD/MM/YYYY HH:MM"
-          const datePart = cellValue.split(' ')[0];
+          const datePart = String(cellValue).split(' ')[0];
           return datePart;
         }
       }
@@ -229,49 +236,20 @@ class ExcelHandler {
    * Get or create sheet with headers
    */
   getOrCreateSheet(wb, sheetName) {
-    let ws = wb.Sheets[sheetName];
+    let ws = wb.getWorksheet(sheetName);
 
     if (!ws) {
       // Create new sheet with headers
-      ws = XLSX.utils.aoa_to_sheet([
-        this.headers, // Row 1: Headers
-        [], // Row 2: Empty (space between headers and data)
-      ]);
+      ws = wb.addWorksheet(sheetName);
 
-      // Set column widths
-      const colWidths = Array(this.headers.length).fill({ wch: 32 });
-      ws['!cols'] = colWidths;
+      // Add header row (row 1)
+      ws.addRow(this.headers);
 
-      // Apply yellow fill to headers
-      for (let i = 0; i < this.headers.length; i++) {
-        const cellAddress = XLSX.utils.encode_cell({ r: 0, c: i });
-        ws[cellAddress] = {
-          v: this.headers[i],
-          s: {
-            fill: {
-              patternType: 'solid',
-              fgColor: { indexed: 5 },
-            },
-            font: {
-              bold: true,
-              color: { rgb: '000000' },
-            },
-            alignment: {
-              horizontal: 'center',
-              vertical: 'center',
-              wrapText: true,
-            },
-            border: {
-              top: { style: 'thin' },
-              bottom: { style: 'thin' },
-              left: { style: 'thin' },
-              right: { style: 'thin' },
-            },
-          },
-        };
-      }
+      // Add empty row (row 2)
+      ws.addRow([]);
 
-      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+      // Apply header styling
+      this.applyHeaderStyle(ws);
     }
 
     return ws;
@@ -321,27 +299,28 @@ class ExcelHandler {
 
   /**
    * Read all existing product rows from sheet
+   * Returns array of { rowIndex (1-based), data (array of values) }
    */
   readExistingRows(ws) {
     const existingRows = [];
+    const rowCount = ws.rowCount;
+    const colCount = ws.columnCount;
 
-    if (!ws || !ws['!ref']) {
+    if (rowCount < 3) {
       return existingRows;
     }
 
-    const range = XLSX.utils.decode_range(ws['!ref']);
-
-    // Start from row 3 (index 2) - skip header and empty row
-    for (let rowIndex = 2; rowIndex <= range.e.r; rowIndex++) {
+    // Start from row 3 (1-based) - skip header and empty row
+    for (let rowIndex = 3; rowIndex <= rowCount; rowIndex++) {
+      const excelRow = ws.getRow(rowIndex);
       const row = [];
       let hasData = false;
 
-      for (let colIndex = 0; colIndex <= range.e.c; colIndex++) {
-        const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
-        const cell = ws[cellAddress];
-        const value = cell ? cell.v : '';
-        row.push(value);
-        if (value !== '' && value !== null && value !== undefined) {
+      for (let colIndex = 1; colIndex <= colCount; colIndex++) {
+        const value = excelRow.getCell(colIndex).value;
+        const val = value !== null && value !== undefined ? value : '';
+        row.push(val);
+        if (val !== '') {
           hasData = true;
         }
       }
@@ -385,14 +364,15 @@ class ExcelHandler {
     }
 
     // Read existing file
-    const wb = XLSX.readFile(this.filePath);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(this.filePath);
 
     // Check existing sheets for today's data
     let targetSheetName = todaySheetName;
     let ws = null;
 
     // Get all sheet names
-    const existingSheets = wb.SheetNames;
+    const existingSheets = wb.worksheets.map(s => s.name);
     console.log(`📄 Existing sheets: ${existingSheets.join(', ')}`);
 
     // Try to find a sheet with today's date
@@ -400,7 +380,7 @@ class ExcelHandler {
 
     if (todaySheetExists) {
       // Use today's sheet
-      ws = wb.Sheets[todaySheetName];
+      ws = wb.getWorksheet(todaySheetName);
       targetSheetName = todaySheetName;
       console.log(`📅 Found sheet for today (${todayDateString}), appending to: ${todaySheetName}`);
     } else {
@@ -436,12 +416,12 @@ class ExcelHandler {
       const existingRow = existingRows.find(er => er.data[2] === asin);
 
       if (existingRow) {
-        // Replace existing row with new data
+        // Replace existing row with new data (ExcelJS uses 1-based row/col)
+        const excelRow = ws.getRow(existingRow.rowIndex);
         for (let colIndex = 0; colIndex < newRow.length; colIndex++) {
-          const cellAddress = XLSX.utils.encode_cell({ r: existingRow.rowIndex, c: colIndex });
-          if (!ws[cellAddress]) ws[cellAddress] = {};
-          ws[cellAddress].v = newRow[colIndex];
+          excelRow.getCell(colIndex + 1).value = newRow[colIndex];
         }
+        excelRow.commit();
         updatedCount++;
         console.log(`   🔄 Updated (same ASIN): ${asin} - ${title.substring(0, 50)}...`);
       } else {
@@ -455,8 +435,7 @@ class ExcelHandler {
     // Append new rows if any
     if (rowsToAdd.length > 0) {
       // Get last row in target sheet
-      const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-      let lastRow = range.e.r;
+      let lastRow = ws.rowCount;
 
       // Start appending with blank row separator
       let startRow = lastRow >= 2 ? lastRow + 2 : 3; // +2 to skip blank row
@@ -464,21 +443,16 @@ class ExcelHandler {
       // Append to sheet
       for (let i = 0; i < rowsToAdd.length; i++) {
         const rowIndex = startRow + i;
+        const excelRow = ws.getRow(rowIndex);
         for (let j = 0; j < rowsToAdd[i].length; j++) {
-          const cellAddress = XLSX.utils.encode_cell({ r: rowIndex - 1, c: j });
-          if (!ws[cellAddress]) ws[cellAddress] = {};
-          ws[cellAddress].v = rowsToAdd[i][j];
+          excelRow.getCell(j + 1).value = rowsToAdd[i][j];
         }
+        excelRow.commit();
       }
-
-      // Update range
-      const newRange = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-      newRange.e.r = Math.max(newRange.e.r, startRow + rowsToAdd.length - 2);
-      ws['!ref'] = XLSX.utils.encode_range(newRange);
     }
 
     // Write back
-    XLSX.writeFile(wb, this.filePath);
+    await wb.xlsx.writeFile(this.filePath);
 
     console.log(`\n✅ Excel update completed:`);
     console.log(`   🔄 Updated (same ASIN): ${updatedCount}`);
@@ -503,13 +477,12 @@ class ExcelHandler {
     }
 
     try {
-      const wb = XLSX.readFile(this.filePath);
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.readFile(this.filePath);
 
       // Use the last sheet in the workbook (most recent date-based sheet)
-      const lastSheetName = wb.SheetNames[wb.SheetNames.length - 1];
-      const ws = wb.Sheets[lastSheetName];
-
-      if (!ws) {
+      const worksheets = wb.worksheets;
+      if (worksheets.length === 0) {
         return {
           exists: true,
           path: this.filePath,
@@ -518,19 +491,21 @@ class ExcelHandler {
         };
       }
 
-      const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-      const totalRows = range.e.r; // 0-indexed
-      const dataRows = Math.max(0, totalRows - 1); // Minus header + empty row
+      const lastSheet = worksheets[worksheets.length - 1];
+      const lastSheetName = lastSheet.name;
+
+      const totalRows = lastSheet.rowCount;
+      const dataRows = Math.max(0, totalRows - 2); // Minus header + empty row
 
       return {
         exists: true,
         path: this.filePath,
-        totalRows: totalRows + 1,
+        totalRows: totalRows,
         dataRows: dataRows,
         headers: this.headers.length,
-        sheets: wb.SheetNames.length,
+        sheets: worksheets.length,
         latestSheet: lastSheetName,
-        message: `File exists with ${dataRows} data rows in sheet "${lastSheetName}" (${wb.SheetNames.length} total sheets)`,
+        message: `File exists with ${dataRows} data rows in sheet "${lastSheetName}" (${worksheets.length} total sheets)`,
       };
     } catch (error) {
       return {
