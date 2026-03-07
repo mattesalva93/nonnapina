@@ -1,6 +1,47 @@
+# ─── Dependencies ────────────────────────────────────────────────
 node_modules/
+
+# ─── Build output ────────────────────────────────────────────────
+dist/
+*.tsbuildinfo
+
+# ─── Test coverage ───────────────────────────────────────────────
+coverage/
+
+# ─── Environment variables ───────────────────────────────────────
+# Keep .env.example tracked; never track real secrets
 .env
+.env.local
+.env.*.local
+
+# ─── Runtime output ──────────────────────────────────────────────
 output/
+
+# ─── Logs ────────────────────────────────────────────────────────
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ─── Puppeteer / Chromium downloads ──────────────────────────────
+.local-chromium/
+.chrome/
+chrome-linux/
+chrome-mac/
+chrome-win/
+
+# ─── OS files ────────────────────────────────────────────────────
 .DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Editors ─────────────────────────────────────────────────────
+.idea/
+
+# ─── Playwright ──────────────────────────────────────────────────
 playwright/.cache/
+
+# ─── Misc ────────────────────────────────────────────────────────
+*.tgz
+

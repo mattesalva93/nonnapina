@@ -1,17 +1,38 @@
 import ExcelJS from 'exceljs';
-import fs from 'fs/promises';
-import path from 'path';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import type { EnrichedProduct } from '../types/index.js';
 
-/**
- * Excel Handler - Manage tracker_outcome Excel file
- * Uses ExcelJS instead of xlsx for security (no known vulnerabilities)
- */
+type CompareResult = 'identical' | 'price-only' | 'different';
+
+interface ExcelStats {
+  exists: boolean;
+  path: string;
+  rows?: number;
+  message: string;
+  totalRows?: number;
+  dataRows?: number;
+  headers?: number;
+  sheets?: number;
+  latestSheet?: string;
+  error?: string;
+}
+
 class ExcelHandler {
+  private readonly filePath: string;
+  private readonly sheetName: string;
+  private readonly headers: string[];
+  private readonly headerStyle: {
+    fill: ExcelJS.Fill;
+    font: Partial<ExcelJS.Font>;
+    alignment: Partial<ExcelJS.Alignment>;
+    border: Partial<ExcelJS.Borders>;
+  };
+
   constructor(filePath = './output/tracker_outcome.xlsx') {
     this.filePath = filePath;
     this.sheetName = 'Prodotti';
 
-    // Define column headers in Italian
     this.headers = [
       'Data Fetch',
       'Categoria',
@@ -35,13 +56,12 @@ class ExcelHandler {
       'Marketplace',
     ];
 
-    // Header style definition
     this.headerStyle = {
       fill: {
         type: 'pattern',
         pattern: 'solid',
-        fgColor: { argb: 'FFFFFF00' }, // Yellow
-      },
+        fgColor: { argb: 'FFFFFF00' },
+      } as ExcelJS.Fill,
       font: {
         bold: true,
         color: { argb: 'FF000000' },
@@ -60,10 +80,7 @@ class ExcelHandler {
     };
   }
 
-  /**
-   * Check if Excel file exists
-   */
-  async fileExists() {
+  private async fileExists(): Promise<boolean> {
     try {
       await fs.access(this.filePath);
       return true;
@@ -72,10 +89,7 @@ class ExcelHandler {
     }
   }
 
-  /**
-   * Apply header styling to a worksheet's first row
-   */
-  applyHeaderStyle(ws) {
+  private applyHeaderStyle(ws: ExcelJS.Worksheet): void {
     const headerRow = ws.getRow(1);
     headerRow.eachCell(cell => {
       cell.fill = this.headerStyle.fill;
@@ -83,19 +97,12 @@ class ExcelHandler {
       cell.alignment = this.headerStyle.alignment;
       cell.border = this.headerStyle.border;
     });
-
-    // Set column widths
     ws.columns.forEach(col => {
       col.width = 32;
     });
   }
 
-  /**
-   * Create new Excel file with headers
-   * @param {string} sheetName - Name of the sheet (default: current date in DD-MM-YYYY format)
-   */
-  async createNewFile(sheetName = null) {
-    // If no sheet name provided, use current date
+  private async createNewFile(sheetName?: string): Promise<ExcelJS.Worksheet> {
     if (!sheetName) {
       const now = new Date();
       const dd = String(now.getDate()).padStart(2, '0');
@@ -107,54 +114,23 @@ class ExcelHandler {
     console.log(`📝 Creating new Excel file: ${this.filePath}`);
     console.log(`📄 First sheet: ${sheetName}`);
 
-    // Create workbook and sheet
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet(sheetName);
 
-    // Add header row (row 1)
     ws.addRow(this.headers);
-
-    // Add empty row (row 2) - space between headers and data
     ws.addRow([]);
-
-    // Apply header styling
     this.applyHeaderStyle(ws);
 
-    // Ensure directory exists
     const dir = path.dirname(this.filePath);
     await fs.mkdir(dir, { recursive: true });
 
     await wb.xlsx.writeFile(this.filePath);
-    console.log(
-      `✅ Excel file created with sheet: "${sheetName}" (first data row starts at row 3)`
-    );
+    console.log(`✅ Excel file created with sheet: "${sheetName}"`);
 
     return ws;
   }
 
-  /**
-   * Get last row index (last row with data) - returns 0-based index for compatibility
-   */
-  async getLastRowIndex() {
-    try {
-      const wb = new ExcelJS.Workbook();
-      await wb.xlsx.readFile(this.filePath);
-      const ws = wb.getWorksheet(this.sheetName);
-
-      if (!ws) return 2; // After row 1 (headers), row 2 (empty)
-
-      return ws.rowCount - 1; // Convert to 0-based
-    } catch (error) {
-      console.error('Error reading Excel file:', error.message);
-      return 2; // Default to row 2
-    }
-  }
-
-  /**
-   * Format product data for Excel row
-   */
-  formatProductRow(product) {
-    // Format date with time (DD/MM/YYYY HH:MM)
+  private formatProductRow(product: EnrichedProduct): (string | number)[] {
     let dateString = '';
     if (product.fetchedAt) {
       const date = new Date(product.fetchedAt);
@@ -166,183 +142,106 @@ class ExcelHandler {
       dateString = `${dd}/${mm}/${yyyy} ${hh}:${min}`;
     }
 
-    // Calculate discount amount from Keepa data if available
-    let discountAmount = '';
+    let discountAmount: string | number = '';
     if (product.keepaAvgPrice && product.keepaCurrentPrice) {
       discountAmount = (product.keepaAvgPrice - product.keepaCurrentPrice).toFixed(2);
     }
 
     return [
       dateString,
-      product.category || '',
-      product.asin || '',
-      product.title || '',
-      product.keepaAvgPrice || product.originalPrice || '',
-      product.price || product.keepaCurrentPrice || '',
-      discountAmount || product.discountAmount || '',
-      product.keepaDiscount || product.discountPercentage || '',
-      product.currency || '',
-      product.availability?.message || '',
-      product.availability?.type || '',
-      product.rating || product.keepaRating || '',
-      product.ratingCount || product.keepaReviewCount || '',
+      product.category ?? '',
+      product.asin ?? '',
+      product.title ?? '',
+      product.keepaAvgPrice ?? product.originalPrice ?? '',
+      product.price ?? product.keepaCurrentPrice ?? '',
+      (discountAmount || product.discountAmount) ?? '',
+      product.keepaDiscount ?? product.discountPercentage ?? '',
+      product.currency ?? '',
+      product.availability?.message ?? '',
+      product.availability?.type ?? '',
+      product.rating ?? product.keepaRating ?? '',
+      product.ratingCount ?? product.keepaReviewCount ?? '',
       product.features ? product.features.join('; ') : '',
-      product.image?.small || '',
-      product.image?.large || '',
-      product.affiliateLinks?.web || '',
-      product.affiliateLinks?.storefront || '',
-      product.parentASIN || '',
-      product.marketplace || '',
+      product.image?.small ?? '',
+      product.image?.large ?? '',
+      product.affiliateLinks?.web ?? '',
+      product.affiliateLinks?.storefront ?? '',
+      product.parentASIN ?? '',
+      product.marketplace ?? '',
     ];
   }
 
-  /**
-   * Get last fetch date from sheet
-   */
-  getLastFetchDate(ws) {
-    try {
-      const rowCount = ws.rowCount;
-
-      // Start from last row, go backwards (skipping headers row 1 and empty row 2)
-      for (let row = rowCount; row >= 3; row--) {
-        const cellValue = ws.getRow(row).getCell(1).value;
-
-        if (cellValue && String(cellValue).trim() !== '') {
-          // Extract date part (DD/MM/YYYY) from "DD/MM/YYYY HH:MM"
-          const datePart = String(cellValue).split(' ')[0];
-          return datePart;
-        }
-      }
-    } catch (error) {
-      console.error('Error getting last fetch date:', error.message);
-    }
-    return null;
-  }
-
-  /**
-   * Get sheet name from date (DD/MM/YYYY format)
-   */
-  getSheetNameFromDate(dateString) {
-    if (!dateString) return null;
-    // Format: DD/MM/YYYY -> "20-02-2026" (for sheet name compatibility)
-    const parts = dateString.split('/');
-    if (parts.length === 3) {
-      return `${parts[0]}-${parts[1]}-${parts[2]}`;
-    }
-    return null;
-  }
-
-  /**
-   * Get or create sheet with headers
-   */
-  getOrCreateSheet(wb, sheetName) {
-    let ws = wb.getWorksheet(sheetName);
+  private getOrCreateSheet(wb: ExcelJS.Workbook, sheetName: string): ExcelJS.Worksheet {
+    let ws = wb.getWorksheet(sheetName) as ExcelJS.Worksheet | undefined;
 
     if (!ws) {
-      // Create new sheet with headers
       ws = wb.addWorksheet(sheetName);
-
-      // Add header row (row 1)
       ws.addRow(this.headers);
-
-      // Add empty row (row 2)
       ws.addRow([]);
-
-      // Apply header styling
       this.applyHeaderStyle(ws);
     }
 
     return ws;
   }
 
-  /**
-   * Compare two product rows
-   * Returns: 'identical' | 'price-only' | 'different'
-   */
-  compareProductRows(row1, row2) {
-    // ASIN is at index 2
+  compareProductRows(row1: (string | number)[], row2: (string | number)[]): CompareResult {
     if (row1[2] !== row2[2]) {
-      return 'different'; // Different products
+      return 'different';
     }
 
-    // Check if all fields are identical
     let allIdentical = true;
     let onlyPriceDifferent = true;
-
-    // Price-related fields indices
-    const priceIndices = [4, 5, 6, 7]; // Prezzo Originale, Prezzo Scontato, Importo Risparmiato, Percentuale Sconto
+    const priceIndices = [4, 5, 6, 7];
 
     for (let i = 0; i < row1.length; i++) {
-      // Skip date field (index 0) for comparison
       if (i === 0) continue;
 
-      const val1 = row1[i] === null || row1[i] === undefined ? '' : String(row1[i]);
-      const val2 = row2[i] === null || row2[i] === undefined ? '' : String(row2[i]);
+      const val1 = row1[i] == null ? '' : String(row1[i]);
+      const val2 = row2[i] == null ? '' : String(row2[i]);
 
       if (val1 !== val2) {
         allIdentical = false;
-        // If difference is NOT in price fields, it's a different product variant
         if (!priceIndices.includes(i)) {
           onlyPriceDifferent = false;
         }
       }
     }
 
-    if (allIdentical) {
-      return 'identical';
-    } else if (onlyPriceDifferent) {
-      return 'price-only';
-    } else {
-      return 'different';
-    }
+    if (allIdentical) return 'identical';
+    if (onlyPriceDifferent) return 'price-only';
+    return 'different';
   }
 
-  /**
-   * Read all existing product rows from sheet
-   * Returns array of { rowIndex (1-based), data (array of values) }
-   */
-  readExistingRows(ws) {
-    const existingRows = [];
+  private readExistingRows(
+    ws: ExcelJS.Worksheet
+  ): { rowIndex: number; data: (string | number)[] }[] {
+    const existingRows: { rowIndex: number; data: (string | number)[] }[] = [];
     const rowCount = ws.rowCount;
     const colCount = ws.columnCount;
 
-    if (rowCount < 3) {
-      return existingRows;
-    }
+    if (rowCount < 3) return existingRows;
 
-    // Start from row 3 (1-based) - skip header and empty row
     for (let rowIndex = 3; rowIndex <= rowCount; rowIndex++) {
       const excelRow = ws.getRow(rowIndex);
-      const row = [];
+      const row: (string | number)[] = [];
       let hasData = false;
 
       for (let colIndex = 1; colIndex <= colCount; colIndex++) {
         const value = excelRow.getCell(colIndex).value;
-        const val = value !== null && value !== undefined ? value : '';
+        const val = value != null ? (value as string | number) : '';
         row.push(val);
-        if (val !== '') {
-          hasData = true;
-        }
+        if (val !== '') hasData = true;
       }
 
-      if (hasData) {
-        existingRows.push({ rowIndex, data: row });
-      }
+      if (hasData) existingRows.push({ rowIndex, data: row });
     }
 
     return existingRows;
   }
 
-  /**
-   * Append products to Excel file with date-based sheet management
-   * - Skip if row is identical
-   * - Update if only price fields changed
-   * - Add new row for all other cases
-   */
-  async appendProducts(products) {
+  async appendProducts(products: EnrichedProduct[]): Promise<void> {
     console.log(`\n💾 Writing ${products.length} products to Excel...\n`);
 
-    // Get extraction date from first product
     if (!products || products.length === 0) {
       console.log('❌ No products to append');
       return;
@@ -357,66 +256,47 @@ class ExcelHandler {
     const todaySheetName = `${dd}-${mm}-${yyyy}`;
 
     const exists = await this.fileExists();
-
     if (!exists) {
-      // Create new file with today's sheet
       await this.createNewFile(todaySheetName);
     }
 
-    // Read existing file
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.readFile(this.filePath);
 
-    // Check existing sheets for today's data
-    let targetSheetName = todaySheetName;
-    let ws = null;
-
-    // Get all sheet names
     const existingSheets = wb.worksheets.map(s => s.name);
     console.log(`📄 Existing sheets: ${existingSheets.join(', ')}`);
 
-    // Try to find a sheet with today's date
-    let todaySheetExists = existingSheets.includes(todaySheetName);
+    const todaySheetExists = existingSheets.includes(todaySheetName);
+    let ws: ExcelJS.Worksheet;
+    let targetSheetName: string;
 
     if (todaySheetExists) {
-      // Use today's sheet
-      ws = wb.getWorksheet(todaySheetName);
+      ws = wb.getWorksheet(todaySheetName) as ExcelJS.Worksheet;
       targetSheetName = todaySheetName;
       console.log(`📅 Found sheet for today (${todayDateString}), appending to: ${todaySheetName}`);
     } else {
-      // Create new sheet for today
       console.log(`📅 No sheet found for today (${todayDateString})`);
       console.log(`📄 Creating new sheet: ${todaySheetName}`);
       ws = this.getOrCreateSheet(wb, todaySheetName);
       targetSheetName = todaySheetName;
     }
 
-    // Ensure we have the target sheet
-    if (!ws) {
-      ws = this.getOrCreateSheet(wb, targetSheetName);
-    }
-
-    // Read existing rows from sheet
     const existingRows = this.readExistingRows(ws);
     console.log(`📊 Found ${existingRows.length} existing rows in sheet`);
 
-    // Format all product rows
     const productRows = products.map(p => this.formatProductRow(p));
 
-    // Process each product row
     let updatedCount = 0;
     let addedCount = 0;
-    const rowsToAdd = [];
+    const rowsToAdd: (string | number)[][] = [];
 
     for (const newRow of productRows) {
-      const asin = newRow[2]; // ASIN is at index 2
-      const title = newRow[3]; // Title is at index 3 (for logging)
+      const asin = newRow[2];
+      const title = String(newRow[3]);
 
-      // Find existing row with same ASIN (more reliable than title matching)
       const existingRow = existingRows.find(er => er.data[2] === asin);
 
       if (existingRow) {
-        // Replace existing row with new data (ExcelJS uses 1-based row/col)
         const excelRow = ws.getRow(existingRow.rowIndex);
         for (let colIndex = 0; colIndex < newRow.length; colIndex++) {
           excelRow.getCell(colIndex + 1).value = newRow[colIndex];
@@ -425,22 +305,16 @@ class ExcelHandler {
         updatedCount++;
         console.log(`   🔄 Updated (same ASIN): ${asin} - ${title.substring(0, 50)}...`);
       } else {
-        // New product - add to list
         rowsToAdd.push(newRow);
         addedCount++;
         console.log(`   ➕ Added (new): ${asin} - ${title.substring(0, 50)}...`);
       }
     }
 
-    // Append new rows if any
     if (rowsToAdd.length > 0) {
-      // Get last row in target sheet
-      let lastRow = ws.rowCount;
+      const lastRow = ws.rowCount;
+      const startRow = lastRow >= 2 ? lastRow + 2 : 3;
 
-      // Start appending with blank row separator
-      let startRow = lastRow >= 2 ? lastRow + 2 : 3; // +2 to skip blank row
-
-      // Append to sheet
       for (let i = 0; i < rowsToAdd.length; i++) {
         const rowIndex = startRow + i;
         const excelRow = ws.getRow(rowIndex);
@@ -451,7 +325,6 @@ class ExcelHandler {
       }
     }
 
-    // Write back
     await wb.xlsx.writeFile(this.filePath);
 
     console.log(`\n✅ Excel update completed:`);
@@ -461,10 +334,7 @@ class ExcelHandler {
     console.log(`📁 File: ${this.filePath}`);
   }
 
-  /**
-   * Get file stats (uses latest sheet in the workbook)
-   */
-  async getStats() {
+  async getStats(): Promise<ExcelStats> {
     const exists = await this.fileExists();
 
     if (!exists) {
@@ -480,7 +350,6 @@ class ExcelHandler {
       const wb = new ExcelJS.Workbook();
       await wb.xlsx.readFile(this.filePath);
 
-      // Use the last sheet in the workbook (most recent date-based sheet)
       const worksheets = wb.worksheets;
       if (worksheets.length === 0) {
         return {
@@ -492,26 +361,24 @@ class ExcelHandler {
       }
 
       const lastSheet = worksheets[worksheets.length - 1];
-      const lastSheetName = lastSheet.name;
-
       const totalRows = lastSheet.rowCount;
-      const dataRows = Math.max(0, totalRows - 2); // Minus header + empty row
+      const dataRows = Math.max(0, totalRows - 2);
 
       return {
         exists: true,
         path: this.filePath,
-        totalRows: totalRows,
-        dataRows: dataRows,
+        totalRows,
+        dataRows,
         headers: this.headers.length,
         sheets: worksheets.length,
-        latestSheet: lastSheetName,
-        message: `File exists with ${dataRows} data rows in sheet "${lastSheetName}" (${worksheets.length} total sheets)`,
+        latestSheet: lastSheet.name,
+        message: `File exists with ${dataRows} data rows in sheet "${lastSheet.name}" (${worksheets.length} total sheets)`,
       };
     } catch (error) {
       return {
         exists: true,
         path: this.filePath,
-        error: error.message,
+        error: (error as Error).message,
         message: 'Error reading file stats',
       };
     }

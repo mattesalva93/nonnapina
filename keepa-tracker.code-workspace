@@ -1,0 +1,186 @@
+{
+  "folders": [
+    {
+      "path": ".",
+    },
+  ],
+  "settings": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.eslint": "explicit",
+      "source.organizeImports": "explicit",
+    },
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true,
+
+    "js/ts.preferences.importModuleSpecifier": "relative",
+    "js/ts.suggest.autoImports": true,
+
+    "[typescript]": {
+      "editor.defaultFormatter": "esbenp.prettier-vscode",
+    },
+    "[javascript]": {
+      "editor.defaultFormatter": "esbenp.prettier-vscode",
+    },
+    "[json]": {
+      "editor.defaultFormatter": "esbenp.prettier-vscode",
+    },
+    "[prisma]": {
+      "editor.defaultFormatter": "Prisma.prisma",
+    },
+
+    "files.exclude": {
+      "**/node_modules": true,
+      "**/dist": true,
+      "**/.git": true,
+      "**/output": true,
+      "**/.DS_Store": true,
+    },
+    "search.exclude": {
+      "**/node_modules": true,
+      "**/dist": true,
+      "**/output": true,
+      "**/*.lock": true,
+      "**/package-lock.json": true,
+    },
+
+    "files.associations": {
+      "*.env*": "dotenv",
+      "Dockerfile*": "dockerfile",
+      "docker-compose*.yml": "yaml",
+      "*.prisma": "prisma",
+    },
+
+    "eslint.validate": ["javascript", "typescript"],
+
+    "docker.defaultRegistryPath": "",
+
+    "testing.automaticallyOpenPeekView": "failureAnywhere",
+    "cSpell.words": ["bradlc", "esbenp", "humao", "mikestead", "Zixuan"],
+  },
+  "extensions": {
+    "recommendations": [
+      "esbenp.prettier-vscode",
+      "dbaeumer.vscode-eslint",
+      "ms-azuretools.vscode-docker",
+      "Prisma.prisma",
+      "mikestead.dotenv",
+      "ZixuanChen.vitest-explorer",
+      "ms-vscode.vscode-typescript-next",
+      "bradlc.vscode-tailwindcss",
+      "humao.rest-client",
+    ],
+  },
+  "launch": {
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "type": "node",
+        "request": "launch",
+        "name": "🚀 Run Express Server (Dev)",
+        "skipFiles": ["<node_internals>/**"],
+        "runtimeExecutable": "npx",
+        "runtimeArgs": ["tsx", "src/server.ts"],
+        "console": "integratedTerminal",
+        "env": {
+          "NODE_ENV": "development",
+        },
+        "envFile": "${workspaceFolder}/.env",
+      },
+      {
+        "type": "node",
+        "request": "launch",
+        "name": "🔧 Run Legacy CLI Pipeline",
+        "skipFiles": ["<node_internals>/**"],
+        "program": "${workspaceFolder}/src/index.js",
+        "console": "integratedTerminal",
+        "runtimeExecutable": "${workspaceFolder}/bin/run-node.sh",
+        "env": {
+          "NODE_ENV": "development",
+        },
+      },
+      {
+        "type": "node",
+        "request": "launch",
+        "name": "🧪 Run Vitest",
+        "skipFiles": ["<node_internals>/**"],
+        "runtimeExecutable": "npx",
+        "runtimeArgs": ["vitest", "run"],
+        "console": "integratedTerminal",
+      },
+      {
+        "type": "node",
+        "request": "launch",
+        "name": "🐛 Debug Current File",
+        "skipFiles": ["<node_internals>/**"],
+        "runtimeExecutable": "npx",
+        "runtimeArgs": ["tsx", "${file}"],
+        "console": "integratedTerminal",
+        "env": {
+          "NODE_ENV": "development",
+        },
+        "envFile": "${workspaceFolder}/.env",
+      },
+    ],
+    "compounds": [],
+  },
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "Docker: Build & Up",
+        "type": "shell",
+        "command": "docker compose up --build -d",
+        "group": "build",
+        "problemMatcher": [],
+      },
+      {
+        "label": "Docker: Down",
+        "type": "shell",
+        "command": "docker compose down",
+        "problemMatcher": [],
+      },
+      {
+        "label": "Docker: Logs",
+        "type": "shell",
+        "command": "docker compose logs -f app",
+        "isBackground": true,
+        "problemMatcher": [],
+      },
+      {
+        "label": "Prisma: Generate Client",
+        "type": "shell",
+        "command": "npx prisma generate",
+        "problemMatcher": [],
+      },
+      {
+        "label": "Prisma: Migrate Dev",
+        "type": "shell",
+        "command": "npx prisma migrate dev",
+        "problemMatcher": [],
+      },
+      {
+        "label": "Prisma: Studio",
+        "type": "shell",
+        "command": "npx prisma studio",
+        "isBackground": true,
+        "problemMatcher": [],
+      },
+      {
+        "label": "TypeScript: Check",
+        "type": "shell",
+        "command": "npx tsc --noEmit",
+        "group": "build",
+        "problemMatcher": "$tsc",
+      },
+      {
+        "label": "Test: Run All",
+        "type": "shell",
+        "command": "npx vitest run",
+        "group": "test",
+        "problemMatcher": [],
+      },
+    ],
+  },
+}
