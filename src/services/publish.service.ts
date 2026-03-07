@@ -65,6 +65,7 @@ function formatPrice(value: number): string {
 export function buildPostContent(deal: {
   product: { title: string };
   price: number | null;
+  currentPrice: number | null;
   avgPrice: number | null;
   discount: number | null;
   affiliateWeb: string | null;
@@ -72,7 +73,9 @@ export function buildPostContent(deal: {
   rating: number | null;
 }): string {
   const title = deal.product.title;
-  const price = deal.price != null ? formatPrice(deal.price) : '–';
+  // currentPrice = Keepa's actual deal price; price = Amazon API listing price (fallback)
+  const dealPrice = deal.currentPrice ?? deal.price;
+  const price = dealPrice != null ? formatPrice(dealPrice) : '–';
   const originalPrice = deal.avgPrice != null ? formatPrice(deal.avgPrice) : undefined;
   const discount = deal.discount != null ? deal.discount : undefined;
   const link = deal.affiliateWeb ?? '';
