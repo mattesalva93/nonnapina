@@ -1,0 +1,78 @@
+// Prisma schema for Keepa Tracker
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Models ──────────────────────────────────────────────────────────────────
+
+/// Represents a unique Amazon product, kept in sync with the latest Amazon API data.
+model Product {
+  id          String   @id @default(cuid())
+  asin        String   @unique
+  parentAsin  String?
+  title       String
+  marketplace String   @default("IT")
+  imageSmall  String?
+  imageLarge  String?
+  features    String[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  deals Deal[]
+
+  @@index([marketplace])
+}
+
+/// Represents a single deal found for a product in a scraping run.
+model Deal {
+  id             String   @id @default(cuid())
+  asin           String
+  category       String
+  price          Float?
+  currency       String   @default("EUR")
+  avgPrice       Float?
+  currentPrice   Float?
+  discount       Int?
+  rating         Float?
+  reviewCount    Int?
+  affiliateWeb   String?
+  affiliateStore String?
+  fetchedAt      DateTime @default(now())
+  scrapeRunId    String
+
+  product   Product   @relation(fields: [asin], references: [asin])
+  scrapeRun ScrapeRun @relation(fields: [scrapeRunId], references: [id])
+
+  @@index([asin])
+  @@index([scrapeRunId])
+  @@index([category])
+  @@index([fetchedAt])
+  @@index([discount])
+}
+
+/// Tracks each scraping execution with its status and outcome.
+model ScrapeRun {
+  id           String          @id @default(cuid())
+  startedAt    DateTime        @default(now())
+  completedAt  DateTime?
+  status       ScrapeRunStatus @default(RUNNING)
+  totalDeals   Int             @default(0)
+  errorMessage String?
+
+  deals Deal[]
+
+  @@index([status])
+  @@index([startedAt])
+}
+
+enum ScrapeRunStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}

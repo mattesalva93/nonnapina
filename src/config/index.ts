@@ -2,6 +2,13 @@ import 'dotenv/config';
 import { z } from 'zod';
 
 const configSchema = z.object({
+  server: z.object({
+    port: z.number().int().positive().default(3000),
+    nodeEnv: z.enum(['development', 'production', 'test']).default('development'),
+  }),
+  database: z.object({
+    url: z.string().default(''),
+  }),
   amazon: z.object({
     accessKey: z.string().min(1),
     secretKey: z.string().min(1),
@@ -32,6 +39,13 @@ const configSchema = z.object({
 export type AppConfig = z.infer<typeof configSchema>;
 
 const rawConfig = {
+  server: {
+    port: parseInt(process.env.PORT ?? '3000'),
+    nodeEnv: (process.env.NODE_ENV ?? 'development') as 'development' | 'production' | 'test',
+  },
+  database: {
+    url: process.env.DATABASE_URL ?? '',
+  },
   amazon: {
     accessKey: process.env.AMAZON_ACCESS_KEY ?? '',
     secretKey: process.env.AMAZON_SECRET_KEY ?? '',

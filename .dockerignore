@@ -1,0 +1,49 @@
+# Build artifacts
+dist/
+*.tsbuildinfo
+
+# Dependencies
+node_modules/
+
+# Environment files (contain secrets)
+.env
+.env.*
+!.env.example
+
+# Test and coverage output
+coverage/
+
+# Application output files
+output/
+
+# Version control
+.git/
+.gitignore
+
+# Editor and IDE
+.vscode/
+.idea/
+
+# CI/GitHub
+.github/
+
+# Project documentation / memory
+memory-bank/
+README.md
+*.md
+!prisma/README.md
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# TypeScript source (not needed at runtime; only dist/ is used)
+src/
+tsconfig.json
+
+# Test files
+**/*.test.ts
+**/*.spec.ts
+vitest.config.ts

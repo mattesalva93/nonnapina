@@ -2,15 +2,15 @@
 
 ## In Progress
 
-(none)
+- [TASK002] Phase 4 — Cleanup legacy CLI utils, launchers, and README update
 
 ## Pending
 
-- [TASK001] Project transition Phase 1 — Foundation setup (TypeScript, Prisma, Docker, Vitest)
+(none)
 
 ## Completed
 
-(none)
+- [TASK001] Phases 1–3 — TypeScript migration, Prisma, Express server, Docker — Completed
 
 ## Abandoned
 

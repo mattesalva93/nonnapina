@@ -12,37 +12,37 @@
 
 ## What's Left to Build (v1.0.0 Target)
 
-### Phase 1 — Foundation (Not Started)
+### Phase 1 — Foundation ✅ COMPLETE
 
-- [ ] TypeScript configuration
-- [ ] Prisma schema + PostgreSQL setup
-- [ ] Dockerfile + docker-compose.yml
-- [ ] Typed config module
-- [ ] Vitest setup
+- [x] TypeScript configuration (tsconfig.json, all .js → .ts, 0 compile errors)
+- [x] Prisma schema + PostgreSQL setup (prisma/schema.prisma, Prisma 5.22.0)
+- [x] Dockerfile + docker-compose.yml (multi-stage, Node 22, Chromium, postgres:16-alpine)
+- [x] Typed config module (src/config/index.ts with zod validation)
+- [x] Vitest setup (5/5 tests passing)
 
-### Phase 2 — Core Services (Not Started)
+### Phase 2 — Core Services ✅ COMPLETE
 
-- [ ] Migrate amazon.js → amazon.service.ts
-- [ ] Migrate keepa.js → keepa.service.ts
-- [ ] Create product.service.ts with Prisma persistence
+- [x] Migrate amazon.js → src/services/amazon.ts
+- [x] Migrate keepa.js → src/scrapers/keepa.ts
+- [x] Create src/services/product.service.ts with Prisma persistence
 
-### Phase 3 — Express Server (Not Started)
+### Phase 3 — Express Server ✅ COMPLETE
 
-- [ ] Express app with routes
-- [ ] Wire services to endpoints
-- [ ] Middleware (error handling, validation, logging)
-- [ ] Scheduled scraping (node-cron)
+- [x] Express app with routes (src/server.ts)
+- [x] Routes: /api/scrape, /api/products, /api/deals, /health
+- [x] Middleware: requestLogger, errorHandler (src/middleware/)
+- [x] Scheduled scraping via node-cron (daily 08:00, override via SCRAPE_CRON)
+- [x] Structured logging with pino + pino-pretty
 
-### Phase 4 — Cleanup (Not Started)
+### Phase 4 — Cleanup (Pending)
 
-- [ ] Remove exceljs, sharp, excel-handler.js, notes-generator.js, image-generator.js
-- [ ] Remove HTML template and macOS launcher scripts
-- [ ] Remove json-builder.js (replaced by Prisma)
+- [ ] Remove exceljs, sharp, excel-handler.ts, notes-generator.ts, image-generator.ts
+- [ ] Remove HTML template and macOS launcher scripts (create-launcher.sh, bin/run-node.sh)
+- [ ] Remove json-builder.ts (replaced by Prisma)
 - [ ] Update README
 
 ## Known Issues
 
-- `config/index.js` uses `null` for `storefrontId` (should use `undefined` per coding standards)
-- No test coverage exists
+- Phase 4 cleanup not yet done: legacy utility files and CLI launchers still present
+- Prisma migrations not yet applied to a real DB (needs Docker environment to test)
 - No CI/CD pipeline
-- macOS-specific launcher scripts won't work in Docker
