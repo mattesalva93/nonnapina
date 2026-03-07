@@ -138,7 +138,11 @@ const TELEGRAM_CAPTION_LIMIT = 1024;
 async function publishToTelegram(payload: ChannelPayload): Promise<ChannelResult> {
   const { botToken, chatId } = config.telegram;
   if (!botToken || !chatId) {
-    return { channel: 'TELEGRAM', success: false, error: 'TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not configured' };
+    return {
+      channel: 'TELEGRAM',
+      success: false,
+      error: 'TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not configured',
+    };
   }
 
   const baseUrl = `https://api.telegram.org/bot${botToken}`;
@@ -147,37 +151,53 @@ async function publishToTelegram(payload: ChannelPayload): Promise<ChannelResult
   try {
     if (imageUrl && postContent.length <= TELEGRAM_CAPTION_LIMIT) {
       // Happy path: photo + caption in one message
-      await axios.post(`${baseUrl}/sendPhoto`, {
-        chat_id: chatId,
-        photo: imageUrl,
-        caption: postContent,
-        parse_mode: 'HTML',
-      }, { timeout: 15000 });
+      await axios.post(
+        `${baseUrl}/sendPhoto`,
+        {
+          chat_id: chatId,
+          photo: imageUrl,
+          caption: postContent,
+          parse_mode: 'HTML',
+        },
+        { timeout: 15000 }
+      );
     } else if (imageUrl) {
       // Caption too long: send photo first, then text
-      await axios.post(`${baseUrl}/sendPhoto`, {
-        chat_id: chatId,
-        photo: imageUrl,
-      }, { timeout: 15000 });
-      await axios.post(`${baseUrl}/sendMessage`, {
-        chat_id: chatId,
-        text: postContent,
-        disable_web_page_preview: true,
-      }, { timeout: 15000 });
+      await axios.post(
+        `${baseUrl}/sendPhoto`,
+        {
+          chat_id: chatId,
+          photo: imageUrl,
+        },
+        { timeout: 15000 }
+      );
+      await axios.post(
+        `${baseUrl}/sendMessage`,
+        {
+          chat_id: chatId,
+          text: postContent,
+          disable_web_page_preview: true,
+        },
+        { timeout: 15000 }
+      );
     } else {
       // No image: text-only
-      await axios.post(`${baseUrl}/sendMessage`, {
-        chat_id: chatId,
-        text: postContent,
-        disable_web_page_preview: true,
-      }, { timeout: 15000 });
+      await axios.post(
+        `${baseUrl}/sendMessage`,
+        {
+          chat_id: chatId,
+          text: postContent,
+          disable_web_page_preview: true,
+        },
+        { timeout: 15000 }
+      );
     }
 
     logger.info({ channel: 'TELEGRAM', chatId }, 'Published to Telegram');
     return { channel: 'TELEGRAM', success: true };
   } catch (err) {
     const msg = axios.isAxiosError(err)
-      ? err.response?.data?.description ?? err.message
+      ? (err.response?.data?.description ?? err.message)
       : (err as Error).message;
     logger.error({ channel: 'TELEGRAM', error: msg }, 'Telegram publish failed');
     return { channel: 'TELEGRAM', success: false, error: String(msg) };
