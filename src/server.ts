@@ -5,8 +5,10 @@ import { errorHandler } from './middleware/error-handler.js';
 import { requestLogger } from './middleware/request-logger.js';
 import { dealsRouter } from './routes/deals.routes.js';
 import { productsRouter } from './routes/products.routes.js';
+import { publishRouter } from './routes/publish.routes.js';
 import { runScrapeJob, scrapeRouter } from './routes/scrape.routes.js';
 import { getActiveRun, prisma, startScrapeRun } from './services/product.service.js';
+import { runPublishCycle } from './services/publish.service.js';
 import { logger } from './utils/logger.js';
 
 const app = express();
@@ -35,6 +37,7 @@ app.get('/health', async (_req, res) => {
 app.use('/api/scrape', scrapeRouter);
 app.use('/api/products', productsRouter);
 app.use('/api/deals', dealsRouter);
+app.use('/api/publish', publishRouter);
 
 // 404 handler
 app.use((_req, res) => {
@@ -69,6 +72,20 @@ if (config.server.nodeEnv !== 'test') {
     })();
   });
   logger.info({ schedule: cronSchedule }, 'Scrape cron job registered');
+
+  // ─── Scheduled publishing ────────────────────────────────────────────────
+  const { publishCronSchedule } = config.server;
+  cron.schedule(publishCronSchedule, () => {
+    logger.info({ schedule: publishCronSchedule }, 'Scheduled publish triggered');
+    void (async () => {
+      try {
+        await runPublishCycle();
+      } catch (err) {
+        logger.error({ err: (err as Error).message }, 'Scheduled publish failed');
+      }
+    })();
+  });
+  logger.info({ schedule: publishCronSchedule }, 'Publish cron job registered');
 }
 
 // ─── Start server ─────────────────────────────────────────────────────────────

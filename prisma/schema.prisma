@@ -50,11 +50,35 @@ model Deal {
   product   Product   @relation(fields: [asin], references: [asin])
   scrapeRun ScrapeRun @relation(fields: [scrapeRunId], references: [id])
 
+  publications Publication[]
+
   @@index([asin])
   @@index([scrapeRunId])
   @@index([category])
   @@index([fetchedAt])
   @@index([discount])
+  @@index([published, rating, reviewCount])
+}
+
+/// Records each publication attempt for a deal on a specific channel.
+model Publication {
+  id          String         @id @default(cuid())
+  dealId      String
+  channel     PublishChannel
+  postContent String
+  publishedAt DateTime       @default(now())
+  success     Boolean        @default(false)
+
+  deal Deal @relation(fields: [dealId], references: [id])
+
+  @@index([dealId])
+  @@index([channel])
+  @@index([publishedAt])
+}
+
+enum PublishChannel {
+  WHATSAPP
+  TELEGRAM
 }
 
 /// Tracks each scraping execution with its status and outcome.

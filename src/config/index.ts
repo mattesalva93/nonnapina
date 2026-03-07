@@ -6,6 +6,7 @@ const configSchema = z.object({
     port: z.number().int().positive().default(3000),
     nodeEnv: z.enum(['development', 'production', 'test']).default('development'),
     cronSchedule: z.string().default('15 8,20 * * *'),
+    publishCronSchedule: z.string().default('*/30 * * * *'),
   }),
   database: z.object({
     url: z.string().default(''),
@@ -35,6 +36,10 @@ const configSchema = z.object({
     minReviews: z.number().int().nonnegative().default(10),
     topDealsCount: z.number().int().positive().default(5),
   }),
+  telegram: z.object({
+    botToken: z.string().default(''),
+    chatId: z.string().default(''),
+  }),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;
@@ -44,6 +49,7 @@ const rawConfig = {
     port: parseInt(process.env.PORT ?? '3000'),
     nodeEnv: (process.env.NODE_ENV ?? 'development') as 'development' | 'production' | 'test',
     cronSchedule: process.env.SCRAPE_CRON ?? '15 8,20 * * *',
+    publishCronSchedule: process.env.PUBLISH_CRON ?? '*/30 * * * *',
   },
   database: {
     url: process.env.DATABASE_URL ?? '',
@@ -72,6 +78,10 @@ const rawConfig = {
     topReviewCount: parseInt(process.env.TOP_REVIEW_COUNT ?? '5'),
     minReviews: parseInt(process.env.MIN_REVIEWS ?? '10'),
     topDealsCount: parseInt(process.env.TOP_DEALS_COUNT ?? '5'),
+  },
+  telegram: {
+    botToken: process.env.TELEGRAM_BOT_TOKEN ?? '',
+    chatId: process.env.TELEGRAM_CHAT_ID ?? '',
   },
 };
 
