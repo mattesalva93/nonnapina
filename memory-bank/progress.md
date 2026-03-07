@@ -34,15 +34,15 @@
 - [x] Scheduled scraping via node-cron (daily 08:00, override via SCRAPE_CRON)
 - [x] Structured logging with pino + pino-pretty
 
-### Phase 4 — Cleanup (Pending)
+### Phase 4 — Cleanup ✅ COMPLETE
 
-- [ ] Remove exceljs, sharp, excel-handler.ts, notes-generator.ts, image-generator.ts
-- [ ] Remove HTML template and macOS launcher scripts (create-launcher.sh, bin/run-node.sh)
-- [ ] Remove json-builder.ts (replaced by Prisma)
-- [ ] Update README
+- [x] Removed exceljs, sharp, excel-handler.ts, notes-generator.ts, image-generator.ts, json-builder.ts
+- [x] Removed HTML template (src/templates/) and macOS launcher scripts (create-launcher.sh, bin/)
+- [x] Removed CLI entry points (src/index.ts, src/fetch-products.ts)
+- [x] Updated README for Docker/API-based usage
+- [x] Updated package.json: removed obsolete scripts, main → dist/server.js
 
 ## Known Issues
 
-- Phase 4 cleanup not yet done: legacy utility files and CLI launchers still present
-- Prisma migrations not yet applied to a real DB (needs Docker environment to test)
+- Prisma migrations not yet applied to a real DB (needs Docker environment with postgres running)
 - No CI/CD pipeline

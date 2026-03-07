@@ -2,38 +2,30 @@
 
 ## Current Work Focus
 
-Phases 1–3 of the v1.0.0 migration are complete. The application is a fully-structured Express/Prisma/TypeScript server with Docker support. Next focus: Phase 4 cleanup (remove legacy utils, CLI launchers, update README).
+All phases (1–4) of the v1.0.0 migration are complete. The codebase is fully TypeScript, Docker-ready, and clean — no legacy utilities or CLI scripts remain.
 
 ## Recent Changes
 
-- Completed TypeScript migration (all .js → .ts, 0 compile errors, 5/5 tests)
-- Added Prisma 5.22.0 schema (Product, Deal, ScrapeRun models)
-- Created Express server (src/server.ts) with routes, middleware, node-cron
-- Added structured logging with pino
-- Created Dockerfile (multi-stage, Node 22 bookworm-slim + Chromium)
-- Created docker-compose.yml (app + postgres:16-alpine services)
-- Updated package.json: added `server`, `server:dev` scripts; build now runs `prisma generate` first
-- Updated .env.example with PORT, DATABASE_URL, POSTGRES_PASSWORD, SCRAPE_CRON
-- Version bumped to 0.1.0
+- Completed Phase 4 cleanup: removed excel-handler.ts, notes-generator.ts, image-generator.ts, json-builder.ts, src/templates/, create-launcher.sh, bin/, src/index.ts, src/fetch-products.ts
+- Uninstalled exceljs and sharp
+- Rewrote README for Docker/REST API usage
+- Upgraded Prisma to v7.4.2 (added prisma.config.ts + PrismaPg adapter)
+- package.json: main → dist/server.js, removed obsolete scripts, version 0.1.0
 
 ## Current State
 
-- All Phases 1–3 complete and verified (tsc --noEmit: 0 errors, vitest: 5/5 pass)
-- Docker infrastructure ready; migrations need a running postgres to be applied
-- CLI pipeline (src/index.ts, src/fetch-products.ts) still functional alongside Express server
-- Legacy utility files (excel-handler.ts, notes-generator.ts, image-generator.ts, json-builder.ts) still present
+- All Phases 1–4 complete: 0 tsc errors, 5/5 tests, no legacy files
+- Ready for first Docker end-to-end test: `docker compose up --build`
+- CLI pipeline removed; only Express server + scheduled cron remain
 
 ## Next Steps
 
-**Phase 4 — Cleanup:**
-
-1. Remove legacy utils: exceljs dep, excel-handler.ts, notes-generator.ts, image-generator.ts, json-builder.ts
-2. Remove macOS launchers: create-launcher.sh, bin/run-node.sh, src/templates/product-page-template.html
-3. Update README to document Docker setup and API endpoints
-4. Test Docker build end-to-end with `docker compose up --build`
+1. First end-to-end Docker test: `docker compose up --build -d` and hit `/health`
+2. Apply Prisma migrations against the containerized postgres
+3. Trigger a scrape via `POST /api/scrape` and verify data in the DB
 
 ## Active Decisions and Considerations
 
-- Prisma 5 (not v7): v7 broke `url = env("DATABASE_URL")` in schema (requires adapter setup); v5 LTS is stable
-- Express v5 installed (package.json shows ^5.2.1)
-- Keep CLI entry points until Phase 4 cleanup removes them deliberately
+- Prisma v7.4.2 with PrismaPg adapter: `url` moved from schema.prisma to prisma.config.ts (v7 breaking change)
+- Express v5 (package.json shows ^5.2.1)
+- No CLI entry points: all scraping triggered via `POST /api/scrape` or cron
