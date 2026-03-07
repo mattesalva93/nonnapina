@@ -1,14 +1,18 @@
+name: nonnapina
+
 services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: keepa_tracker
-      POSTGRES_USER: keepa
+      POSTGRES_DB: nonnapina
+      POSTGRES_USER: npadmin
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    ports:
+      - '5432:5432'
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U keepa -d keepa_tracker']
+      test: ['CMD-SHELL', 'pg_isready -U npadmin -d nonnapina']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -22,7 +26,7 @@ services:
         condition: service_healthy
     env_file: .env
     environment:
-      DATABASE_URL: postgresql://keepa:${POSTGRES_PASSWORD}@postgres:5432/keepa_tracker
+      DATABASE_URL: postgresql://npadmin:${POSTGRES_PASSWORD}@postgres:5432/nonnapina
       NODE_ENV: production
     ports:
       - '${PORT:-3000}:3000'

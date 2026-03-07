@@ -39,11 +39,7 @@ README.md
 # Logs
 *.log
 
-# TypeScript source (not needed at runtime; only dist/ is used)
-src/
-tsconfig.json
-
-# Test files
+# Test files (not needed in image; src/ and tsconfig.json are needed by the builder stage)
 **/*.test.ts
 **/*.spec.ts
 vitest.config.ts

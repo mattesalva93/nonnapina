@@ -44,5 +44,5 @@
 
 ## Known Issues
 
-- Prisma migrations not yet applied to a real DB (needs Docker environment with postgres running)
+- Orphan container `keepa-tracker` from a previous docker run (can be removed with `docker compose down --remove-orphans`)
 - No CI/CD pipeline

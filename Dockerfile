@@ -38,9 +38,10 @@ WORKDIR /app
 RUN groupadd --gid 1001 nodejs \
   && useradd --uid 1001 --gid nodejs --shell /bin/bash --create-home appuser
 
-# Copy package files and Prisma schema
+# Copy package files, Prisma schema, and config
 COPY package*.json ./
 COPY prisma ./prisma/
+COPY prisma.config.ts ./
 
 # Install production dependencies only
 RUN npm ci --omit=dev

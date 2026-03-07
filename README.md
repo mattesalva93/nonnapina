@@ -38,13 +38,13 @@ Copy `.env.example` to `.env` and set the following variables.
 
 ### Amazon Creators API
 
-| Variable               | Description                                      |
-| ---------------------- | ------------------------------------------------ |
-| `AMAZON_ACCESS_KEY`    | OAuth 2.0 Client ID                              |
-| `AMAZON_SECRET_KEY`    | OAuth 2.0 Client Secret                          |
-| `AMAZON_PARTNER_TAG`   | Affiliate Partner Tag (e.g. `yourid-21`)         |
-| `AMAZON_MARKETPLACE`   | Amazon marketplace (default: `IT`)               |
-| `AMAZON_STOREFRONT_ID` | Optional storefront ID for store deep links      |
+| Variable               | Description                                 |
+| ---------------------- | ------------------------------------------- |
+| `AMAZON_ACCESS_KEY`    | OAuth 2.0 Client ID                         |
+| `AMAZON_SECRET_KEY`    | OAuth 2.0 Client Secret                     |
+| `AMAZON_PARTNER_TAG`   | Affiliate Partner Tag (e.g. `yourid-21`)    |
+| `AMAZON_MARKETPLACE`   | Amazon marketplace (default: `IT`)          |
+| `AMAZON_STOREFRONT_ID` | Optional storefront ID for store deep links |
 
 To obtain Amazon Creators API credentials:
 
@@ -54,27 +54,27 @@ To obtain Amazon Creators API credentials:
 
 ### Keepa scraper
 
-| Variable                    | Description                                           |
-| --------------------------- | ----------------------------------------------------- |
-| `KEEPA_CATEGORIES`          | Comma-separated Keepa category IDs (default: `5`)     |
-| `MAX_PRODUCTS_PER_CATEGORY` | Products to fetch per category (default: `10`)        |
-| `SCRAPING_DELAY_MS`         | Delay between requests in ms (default: `2000`)        |
+| Variable                    | Description                                       |
+| --------------------------- | ------------------------------------------------- |
+| `KEEPA_CATEGORIES`          | Comma-separated Keepa category IDs (default: `5`) |
+| `MAX_PRODUCTS_PER_CATEGORY` | Products to fetch per category (default: `10`)    |
+| `SCRAPING_DELAY_MS`         | Delay between requests in ms (default: `2000`)    |
 
 **Keepa category IDs (Amazon.it)**
 
-| ID | Category                        |
-| -- | ------------------------------- |
-| 1  | Alimentari e cura della casa    |
-| 2  | Altro                           |
-| 3  | App e Giochi                    |
-| 5  | Bellezza                        |
-| 8  | Casa e cucina                   |
-| 10 | Elettronica                     |
-| 14 | Giochi e giocattoli             |
-| 17 | Informatica                     |
-| 22 | Prodotti per animali domestici  |
-| 25 | Sport e tempo libero            |
-| 27 | Videogiochi                     |
+| ID  | Category                       |
+| --- | ------------------------------ |
+| 1   | Alimentari e cura della casa   |
+| 2   | Altro                          |
+| 3   | App e Giochi                   |
+| 5   | Bellezza                       |
+| 8   | Casa e cucina                  |
+| 10  | Elettronica                    |
+| 14  | Giochi e giocattoli            |
+| 17  | Informatica                    |
+| 22  | Prodotti per animali domestici |
+| 25  | Sport e tempo libero           |
+| 27  | Videogiochi                    |
 
 ### Server and database
 
@@ -100,11 +100,11 @@ Returns service and database status.
 
 ### Scrape runs
 
-| Method | Path               | Description                         |
-| ------ | ------------------ | ----------------------------------- |
-| `POST` | `/api/scrape`      | Trigger a new scrape (async, 202)   |
-| `GET`  | `/api/scrape`      | List past scrape runs               |
-| `GET`  | `/api/scrape/:id`  | Get status of a specific scrape run |
+| Method | Path              | Description                         |
+| ------ | ----------------- | ----------------------------------- |
+| `POST` | `/api/scrape`     | Trigger a new scrape (async, 202)   |
+| `GET`  | `/api/scrape`     | List past scrape runs               |
+| `GET`  | `/api/scrape/:id` | Get status of a specific scrape run |
 
 **Trigger a scrape:**
 
@@ -115,18 +115,18 @@ curl -X POST http://localhost:3000/api/scrape
 
 ### Products
 
-| Method | Path                   | Description                       |
-| ------ | ---------------------- | --------------------------------- |
-| `GET`  | `/api/products`        | Paginated product list            |
-| `GET`  | `/api/products/:asin`  | Single product with last 10 deals |
+| Method | Path                  | Description                       |
+| ------ | --------------------- | --------------------------------- |
+| `GET`  | `/api/products`       | Paginated product list            |
+| `GET`  | `/api/products/:asin` | Single product with last 10 deals |
 
 Query parameters for `/api/products`: `limit` (max 200, default 50), `offset`.
 
 ### Deals
 
-| Method | Path          | Description          |
-| ------ | ------------- | -------------------- |
-| `GET`  | `/api/deals`  | Paginated deal list  |
+| Method | Path         | Description         |
+| ------ | ------------ | ------------------- |
+| `GET`  | `/api/deals` | Paginated deal list |
 
 Query parameters: `limit`, `offset`, `category`, `scrapeRunId`.
 

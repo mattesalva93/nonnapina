@@ -15,14 +15,16 @@ All phases (1–4) of the v1.0.0 migration are complete. The codebase is fully T
 ## Current State
 
 - All Phases 1–4 complete: 0 tsc errors, 5/5 tests, no legacy files
-- Ready for first Docker end-to-end test: `docker compose up --build`
-- CLI pipeline removed; only Express server + scheduled cron remain
+- Docker containers running healthy: app on :3000, postgres on :5432
+- Initial Prisma migration applied (`prisma/migrations/20260307121651_init`)
+- DBeaver 26.0.0 installed (`dbeaver-ce`)
+- Health endpoint: `curl http://localhost:3000/health` returns `{"status":"ok","db":"connected"}`
 
 ## Next Steps
 
-1. First end-to-end Docker test: `docker compose up --build -d` and hit `/health`
-2. Apply Prisma migrations against the containerized postgres
-3. Trigger a scrape via `POST /api/scrape` and verify data in the DB
+1. Connect DBeaver to local postgres (`localhost:5432`, user `keepa`, db `keepa_tracker`)
+2. Test `POST /api/scrape` end-to-end and verify data appears in DB
+3. Verify cron job fires at 08:00 or override `SCRAPE_CRON` for a quick test
 
 ## Active Decisions and Considerations
 
