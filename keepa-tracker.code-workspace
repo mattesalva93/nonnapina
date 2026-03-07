@@ -57,7 +57,16 @@
     "docker.defaultRegistryPath": "",
 
     "testing.automaticallyOpenPeekView": "failureAnywhere",
-    "cSpell.words": ["bradlc", "esbenp", "humao", "mikestead", "Zixuan"],
+    "cSpell.words": [
+      "bradlc",
+      "esbenp",
+      "humao",
+      "isready",
+      "mikestead",
+      "nosniff",
+      "npadmin",
+      "Zixuan",
+    ],
   },
   "extensions": {
     "recommendations": [

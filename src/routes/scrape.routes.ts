@@ -5,6 +5,7 @@ import { amazonService } from '../services/amazon.js';
 import {
   completeScrapeRun,
   failScrapeRun,
+  getActiveRun,
   getScrapeRunById,
   getScrapeRuns,
   saveProducts,
@@ -52,6 +53,15 @@ scrapeRouter.get('/:id', async (req, res, next) => {
  */
 scrapeRouter.post('/', async (_req, res, next) => {
   try {
+    const activeRun = await getActiveRun();
+    if (activeRun) {
+      res.status(409).json({
+        error: 'A scrape job is already running',
+        scrapeRunId: activeRun.id,
+      });
+      return;
+    }
+
     const scrapeRun = await startScrapeRun();
 
     // Fire-and-forget: run scraping in background
@@ -69,7 +79,7 @@ scrapeRouter.post('/', async (_req, res, next) => {
   }
 });
 
-async function runScrapeJob(scrapeRunId: string): Promise<void> {
+export async function runScrapeJob(scrapeRunId: string): Promise<void> {
   logger.info({ scrapeRunId }, 'Scrape job started');
 
   try {

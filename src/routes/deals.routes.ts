@@ -10,11 +10,18 @@ export const dealsRouter = Router();
  */
 dealsRouter.get('/', async (req, res, next) => {
   try {
-    const category = typeof req.query.category === 'string' ? req.query.category : undefined;
+    const category =
+      typeof req.query.category === 'string' && req.query.category.length <= 100
+        ? req.query.category
+        : undefined;
     const scrapeRunId =
-      typeof req.query.scrapeRunId === 'string' ? req.query.scrapeRunId : undefined;
-    const limit = Math.min(parseInt(String(req.query.limit ?? '50')), 200);
-    const offset = parseInt(String(req.query.offset ?? '0'));
+      typeof req.query.scrapeRunId === 'string' && req.query.scrapeRunId.length <= 36
+        ? req.query.scrapeRunId
+        : undefined;
+    const rawLimit = parseInt(String(req.query.limit ?? '50'), 10);
+    const rawOffset = parseInt(String(req.query.offset ?? '0'), 10);
+    const limit = Math.min(Number.isNaN(rawLimit) || rawLimit < 0 ? 50 : rawLimit, 200);
+    const offset = Number.isNaN(rawOffset) || rawOffset < 0 ? 0 : rawOffset;
 
     const deals = await getDeals({ category, scrapeRunId, limit, offset });
     res.json({ data: deals, limit, offset, count: deals.length });

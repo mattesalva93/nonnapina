@@ -199,7 +199,7 @@ export async function scrapeKeepaDeals(): Promise<KeepaProduct[]> {
     page = realPage;
     console.log('✅ Browser launched with puppeteer-real-browser');
 
-    page.setViewport({ width: 1280, height: 800 });
+    await page.setViewport({ width: 1280, height: 800 });
     await page.setUserAgent(
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     );
@@ -273,8 +273,8 @@ export async function scrapeKeepaDeals(): Promise<KeepaProduct[]> {
           page!.goto('https://keepa.com/#!deals', { waitUntil: 'networkidle2', timeout: 60000 }),
         { retries: 3, baseDelay: 5000, label: 'Deals page navigation' }
       );
-      page.mouse.move(423, 354);
-      page.mouse.move(320, 530);
+      await page.mouse.move(423, 354);
+      await page.mouse.move(320, 530);
       console.log('   ✅ Deals page loaded successfully');
     } catch (error) {
       console.warn(`   ⚠️  Navigation timeout: ${(error as Error).message}`);

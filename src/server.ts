@@ -5,14 +5,21 @@ import { errorHandler } from './middleware/error-handler.js';
 import { requestLogger } from './middleware/request-logger.js';
 import { dealsRouter } from './routes/deals.routes.js';
 import { productsRouter } from './routes/products.routes.js';
-import { scrapeRouter } from './routes/scrape.routes.js';
-import { prisma } from './services/product.service.js';
+import { runScrapeJob, scrapeRouter } from './routes/scrape.routes.js';
+import { prisma, startScrapeRun } from './services/product.service.js';
 import { logger } from './utils/logger.js';
 
 const app = express();
 
 // ─── Global middleware ────────────────────────────────────────────────────────
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '0');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  next();
+});
 app.use(requestLogger);
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
@@ -39,15 +46,19 @@ app.use(errorHandler);
 
 // ─── Scheduled scraping ──────────────────────────────────────────────────────
 // Runs every day at 08:00 (can be overridden via SCRAPE_CRON env var)
-const cronSchedule = process.env.SCRAPE_CRON ?? '0 8 * * *';
+const { cronSchedule } = config.server;
 
 if (config.server.nodeEnv !== 'test') {
   cron.schedule(cronSchedule, () => {
-    logger.info({ schedule: cronSchedule }, 'Scheduled scrape triggered — POST /api/scrape');
-    // Trigger via internal fetch to reuse the same code path
-    fetch(`http://localhost:${config.server.port}/api/scrape`, { method: 'POST' }).catch(err => {
-      logger.error({ err: (err as Error).message }, 'Scheduled scrape trigger failed');
-    });
+    logger.info({ schedule: cronSchedule }, 'Scheduled scrape triggered');
+    void (async () => {
+      try {
+        const run = await startScrapeRun();
+        await runScrapeJob(run.id);
+      } catch (err) {
+        logger.error({ err: (err as Error).message }, 'Scheduled scrape failed');
+      }
+    })();
   });
   logger.info({ schedule: cronSchedule }, 'Scrape cron job registered');
 }

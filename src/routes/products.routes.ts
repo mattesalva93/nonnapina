@@ -10,8 +10,10 @@ export const productsRouter = Router();
  */
 productsRouter.get('/', async (req, res, next) => {
   try {
-    const limit = Math.min(parseInt(String(req.query.limit ?? '50')), 200);
-    const offset = parseInt(String(req.query.offset ?? '0'));
+    const rawLimit = parseInt(String(req.query.limit ?? '50'), 10);
+    const rawOffset = parseInt(String(req.query.offset ?? '0'), 10);
+    const limit = Math.min(Number.isNaN(rawLimit) || rawLimit < 0 ? 50 : rawLimit, 200);
+    const offset = Number.isNaN(rawOffset) || rawOffset < 0 ? 0 : rawOffset;
     const products = await getProducts({ limit, offset });
     res.json({ data: products, limit, offset, count: products.length });
   } catch (err) {
@@ -25,7 +27,12 @@ productsRouter.get('/', async (req, res, next) => {
  */
 productsRouter.get('/:asin', async (req, res, next) => {
   try {
-    const product = await getProductByAsin(req.params.asin.toUpperCase());
+    const asin = req.params.asin.toUpperCase();
+    if (!/^[A-Z0-9]{10}$/.test(asin)) {
+      res.status(400).json({ error: 'Invalid ASIN format' });
+      return;
+    }
+    const product = await getProductByAsin(asin);
     if (!product) {
       res.status(404).json({ error: 'Product not found' });
       return;

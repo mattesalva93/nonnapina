@@ -1,6 +1,6 @@
-import 'dotenv/config';
-import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '@prisma/client';
+import 'dotenv/config';
 import type { EnrichedProduct } from '../types/index.js';
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
@@ -118,4 +118,8 @@ export async function getScrapeRuns(limit = 10) {
 
 export async function getScrapeRunById(id: string) {
   return prisma.scrapeRun.findUnique({ where: { id } });
+}
+
+export async function getActiveRun() {
+  return prisma.scrapeRun.findFirst({ where: { status: 'RUNNING' } });
 }
