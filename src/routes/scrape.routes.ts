@@ -114,10 +114,13 @@ export async function runScrapeJob(scrapeRunId: string): Promise<void> {
     });
 
     // Step 4: Persist to database
-    await saveProducts(enriched, scrapeRunId);
-    await completeScrapeRun(scrapeRunId, enriched.length);
+    const savedCount = await saveProducts(enriched, scrapeRunId);
+    await completeScrapeRun(scrapeRunId, savedCount);
 
-    logger.info({ scrapeRunId, total: enriched.length }, 'Scrape job completed successfully');
+    logger.info(
+      { scrapeRunId, enriched: enriched.length, saved: savedCount },
+      'Scrape job completed successfully'
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await failScrapeRun(scrapeRunId, message);

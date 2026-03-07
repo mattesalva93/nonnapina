@@ -6,7 +6,7 @@ import { requestLogger } from './middleware/request-logger.js';
 import { dealsRouter } from './routes/deals.routes.js';
 import { productsRouter } from './routes/products.routes.js';
 import { runScrapeJob, scrapeRouter } from './routes/scrape.routes.js';
-import { prisma, startScrapeRun } from './services/product.service.js';
+import { getActiveRun, prisma, startScrapeRun } from './services/product.service.js';
 import { logger } from './utils/logger.js';
 
 const app = express();
@@ -53,6 +53,14 @@ if (config.server.nodeEnv !== 'test') {
     logger.info({ schedule: cronSchedule }, 'Scheduled scrape triggered');
     void (async () => {
       try {
+        const activeRun = await getActiveRun();
+        if (activeRun) {
+          logger.warn(
+            { scrapeRunId: activeRun.id },
+            'Scheduled scrape skipped — a job is already running'
+          );
+          return;
+        }
         const run = await startScrapeRun();
         await runScrapeJob(run.id);
       } catch (err) {

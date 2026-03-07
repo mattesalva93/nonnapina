@@ -2,6 +2,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import 'dotenv/config';
 import type { EnrichedProduct } from '../types/index.js';
+import { logger } from '../utils/logger.js';
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -29,7 +30,9 @@ export async function failScrapeRun(id: string, errorMessage: string) {
 export async function saveProducts(
   products: EnrichedProduct[],
   scrapeRunId: string
-): Promise<void> {
+): Promise<number> {
+  let savedCount = 0;
+
   for (const product of products) {
     await prisma.product.upsert({
       where: { asin: product.asin },
@@ -52,6 +55,27 @@ export async function saveProducts(
       },
     });
 
+    // Deduplication: skip if the most recent deal for this ASIN has the same price, discount and category
+    const lastDeal = await prisma.deal.findFirst({
+      where: { asin: product.asin },
+      orderBy: { fetchedAt: 'desc' },
+      select: { price: true, discount: true, category: true },
+    });
+
+    if (lastDeal) {
+      const sameValue = (a: number | null | undefined, b: number | null | undefined): boolean =>
+        (a ?? undefined) === (b ?? undefined);
+
+      if (
+        sameValue(lastDeal.price, product.price) &&
+        sameValue(lastDeal.discount, product.keepaDiscount) &&
+        lastDeal.category === product.category
+      ) {
+        logger.debug({ asin: product.asin }, 'Skipping duplicate deal — no change detected');
+        continue;
+      }
+    }
+
     await prisma.deal.create({
       data: {
         asin: product.asin,
@@ -68,7 +92,10 @@ export async function saveProducts(
         affiliateStore: product.affiliateLinks.storefront,
       },
     });
+    savedCount++;
   }
+
+  return savedCount;
 }
 
 export interface GetDealsFilters {
