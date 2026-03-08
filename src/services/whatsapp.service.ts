@@ -84,14 +84,199 @@ export async function initWhatsApp(): Promise<void> {
 
 // ─── Channel helpers ─────────────────────────────────────────────────────────
 
-async function getChannel(): Promise<Channel | undefined> {
+interface RawChannelInfo {
+  id: { _serialized: string };
+  name: string;
+}
+
+async function getRawChannels(): Promise<RawChannelInfo[]> {
+  if (!client || !isReady) return [];
+
+  try {
+    // Access raw channel data via Puppeteer, bypassing the buggy Channel._patch constructor
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pupPage = (client as any).pupPage;
+    const rawChannels: Array<{ id: { _serialized: string }; name?: string }> =
+      await pupPage.evaluate(async () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const channels = await (window as any).WWebJS.getChannels();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return channels.map((ch: any) => ({
+          id: { _serialized: ch.id._serialized },
+          name: ch.name,
+        }));
+      });
+    return rawChannels.map(ch => ({
+      id: { _serialized: ch.id._serialized },
+      name: ch.name ?? '(unnamed)',
+    }));
+  } catch (err) {
+    logger.warn({ error: (err as Error).message }, 'Raw channel discovery via pupPage failed');
+    return [];
+  }
+}
+
+async function getSafeChannels(): Promise<Channel[]> {
+  if (!client || !isReady) return [];
+
+  try {
+    return await client.getChannels();
+  } catch (err) {
+    logger.warn(
+      { error: (err as Error).message },
+      'getChannels() failed — will use raw channel data for listing'
+    );
+    return [];
+  }
+}
+
+// ─── Low-level newsletter send via Puppeteer ────────────────────────────────
+// Bypasses whatsapp-web.js's buggy channel.sendMessage() which fails with
+// "getLastMsgKeyForAction is not a function" on newsletter channels.
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getPupPage(): any | undefined {
   if (!client || !isReady) return undefined;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (client as any).pupPage;
+}
 
-  const { channelId } = config.whatsapp;
-  if (!channelId) return undefined;
+async function sendTextToNewsletter(channelId: string, text: string): Promise<void> {
+  const pupPage = getPupPage();
+  if (!pupPage) throw new Error('WhatsApp client is not ready');
 
-  const channels = await client.getChannels();
-  return channels.find((ch: Channel) => ch.id._serialized === channelId || ch.name === channelId);
+  const success = await pupPage.evaluate(
+    async (chatId: string, body: string) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const W = window as any;
+      const chatWid = W.Store.WidFactory.createWid(chatId);
+
+      // Load the newsletter chat model
+      let chat = W.Store.WAWebNewsletterMetadataCollection.get(chatId);
+      if (!chat) {
+        await W.Store.ChannelUtils.loadNewsletterPreviewChat(chatId);
+        chat = await W.Store.WAWebNewsletterMetadataCollection.find(chatWid);
+      }
+      if (!chat) return false;
+
+      // Build message model
+      const meUser = W.Store.User.getMaybeMePnUser();
+      const newId = await W.Store.MsgKey.newId();
+      const newMsgKey = new W.Store.MsgKey({
+        from: meUser,
+        to: chat.id,
+        id: newId,
+        selfDir: 'out',
+      });
+
+      const message = {
+        id: newMsgKey,
+        ack: 0,
+        body,
+        from: meUser,
+        to: chat.id,
+        local: true,
+        self: 'out',
+        t: Math.floor(Date.now() / 1000),
+        isNewMsg: true,
+        type: 'chat',
+      };
+
+      const msg = new W.Store.Msg.modelClass(message);
+      const msgData = W.Store.SendChannelMessage.msgDataFromMsgModel(msg);
+      await W.Store.SendChannelMessage.addNewsletterMsgsRecords([msgData]);
+
+      await W.Store.SendChannelMessage.sendNewsletterMessageJob({
+        msg,
+        type: 'text',
+        newsletterJid: chat.id.toJid(),
+      });
+
+      return true;
+    },
+    channelId,
+    text
+  );
+
+  if (!success) throw new Error('Newsletter chat model not found in browser');
+}
+
+async function sendMediaToNewsletter(
+  channelId: string,
+  base64Data: string,
+  mimetype: string,
+  caption: string,
+  filename: string
+): Promise<void> {
+  const pupPage = getPupPage();
+  if (!pupPage) throw new Error('WhatsApp client is not ready');
+
+  const success = await pupPage.evaluate(
+    async (chatId: string, b64: string, mime: string, cap: string, fname: string) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const W = window as any;
+      const chatWid = W.Store.WidFactory.createWid(chatId);
+
+      let chat = W.Store.WAWebNewsletterMetadataCollection.get(chatId);
+      if (!chat) {
+        await W.Store.ChannelUtils.loadNewsletterPreviewChat(chatId);
+        chat = await W.Store.WAWebNewsletterMetadataCollection.find(chatWid);
+      }
+      if (!chat) return false;
+
+      // Process media
+      const mediaData = await W.WWebJS.processMediaData(
+        { data: b64, mimetype: mime, filename: fname },
+        { sendToChannel: true }
+      );
+
+      const meUser = W.Store.User.getMaybeMePnUser();
+      const newId = await W.Store.MsgKey.newId();
+      const newMsgKey = new W.Store.MsgKey({
+        from: meUser,
+        to: chat.id,
+        id: newId,
+        selfDir: 'out',
+      });
+
+      const message = {
+        id: newMsgKey,
+        ack: 0,
+        body: mediaData.preview,
+        from: meUser,
+        to: chat.id,
+        local: true,
+        self: 'out',
+        t: Math.floor(Date.now() / 1000),
+        isNewMsg: true,
+        type: 'chat',
+        caption: cap,
+        ...mediaData,
+        ...(mediaData.toJSON ? mediaData.toJSON() : {}),
+      };
+
+      const msg = new W.Store.Msg.modelClass(message);
+      const msgData = W.Store.SendChannelMessage.msgDataFromMsgModel(msg);
+      await W.Store.SendChannelMessage.addNewsletterMsgsRecords([msgData]);
+
+      await W.Store.SendChannelMessage.sendNewsletterMessageJob({
+        msg,
+        type: 'media',
+        newsletterJid: chat.id.toJid(),
+        mediaMetadata: msg.avParams(),
+        mediaHandle: mediaData.mediaHandle ?? null,
+      });
+
+      return true;
+    },
+    channelId,
+    base64Data,
+    mimetype,
+    caption,
+    filename
+  );
+
+  if (!success) throw new Error('Newsletter chat model not found in browser');
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -109,23 +294,26 @@ export async function sendToWhatsAppChannel(
     return { success: false, error: 'WhatsApp client is not ready' };
   }
 
-  const channel = await getChannel();
-  if (!channel) {
-    return { success: false, error: 'WhatsApp channel not found — check WHATSAPP_CHANNEL_ID' };
+  const { channelId } = config.whatsapp;
+  if (!channelId) {
+    return { success: false, error: 'WHATSAPP_CHANNEL_ID not configured' };
   }
 
   try {
     if (imageUrl) {
       const media = await MessageMedia.fromUrl(imageUrl, { unsafeMime: true });
-      await channel.sendMessage(media, { caption: text });
+      await sendMediaToNewsletter(
+        channelId,
+        media.data,
+        media.mimetype,
+        text,
+        media.filename ?? 'image.jpg'
+      );
     } else {
-      await channel.sendMessage(text);
+      await sendTextToNewsletter(channelId, text);
     }
 
-    logger.info(
-      { channel: channel.name, channelId: channel.id._serialized },
-      'Published to WhatsApp channel'
-    );
+    logger.info({ channelId }, 'Published to WhatsApp channel');
     return { success: true };
   } catch (err) {
     const msg = (err as Error).message;
@@ -143,19 +331,16 @@ export async function sendBufferToWhatsAppChannel(
     return { success: false, error: 'WhatsApp client is not ready' };
   }
 
-  const channel = await getChannel();
-  if (!channel) {
-    return { success: false, error: 'WhatsApp channel not found — check WHATSAPP_CHANNEL_ID' };
+  const { channelId } = config.whatsapp;
+  if (!channelId) {
+    return { success: false, error: 'WHATSAPP_CHANNEL_ID not configured' };
   }
 
   try {
-    const media = new MessageMedia(mimetype, imageBuffer.toString('base64'), 'top5.png');
-    await channel.sendMessage(media, { caption: text });
+    const base64 = imageBuffer.toString('base64');
+    await sendMediaToNewsletter(channelId, base64, mimetype, text, 'top5.png');
 
-    logger.info(
-      { channel: channel.name, channelId: channel.id._serialized },
-      'Published buffer image to WhatsApp channel'
-    );
+    logger.info({ channelId }, 'Published buffer image to WhatsApp channel');
     return { success: true };
   } catch (err) {
     const msg = (err as Error).message;
@@ -166,8 +351,24 @@ export async function sendBufferToWhatsAppChannel(
 
 export async function listChannels(): Promise<Array<{ id: string; name: string }>> {
   if (!isReady || !client) return [];
-  const channels = await client.getChannels();
-  return channels.map((ch: Channel) => ({ id: ch.id._serialized, name: ch.name }));
+
+  // Use raw Puppeteer-level data to avoid Channel._patch crash
+  const rawChannels = await getRawChannels();
+  if (rawChannels.length > 0) {
+    return rawChannels.map(ch => ({ id: ch.id._serialized, name: ch.name }));
+  }
+
+  // Last resort: try the safe wrapper (works if the bug is fixed in future versions)
+  const channels = await getSafeChannels();
+  return channels
+    .map(ch => {
+      try {
+        return { id: ch.id._serialized, name: ch.name ?? '(unnamed)' };
+      } catch {
+        return { id: 'unknown', name: '(broken)' };
+      }
+    })
+    .filter(ch => ch.id !== 'unknown');
 }
 
 export async function destroyWhatsApp(): Promise<void> {
