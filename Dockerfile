@@ -32,6 +32,9 @@ RUN apt-get update && apt-get install -y \
 # Tell chrome-launcher (used by puppeteer-real-browser) where Chromium is
 ENV CHROMIUM_PATH=/usr/bin/chromium
 
+# Set timezone to Italian time
+ENV TZ=Europe/Rome
+
 WORKDIR /app
 
 # Create non-root user for security
@@ -52,8 +55,8 @@ RUN npx prisma generate
 # Copy compiled output from builder stage
 COPY --from=builder /app/dist ./dist/
 
-# Create output dir and give ownership to non-root user
-RUN mkdir -p output && chown -R appuser:nodejs /app
+# Create output and WhatsApp session dirs and give ownership to non-root user
+RUN mkdir -p output .wwebjs_auth && chown -R appuser:nodejs /app
 
 USER appuser
 

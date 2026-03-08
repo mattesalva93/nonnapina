@@ -43,3 +43,7 @@ README.md
 **/*.test.ts
 **/*.spec.ts
 vitest.config.ts
+
+# WhatsApp session data (managed via Docker volume)
+.wwebjs_auth/
+.wwebjs_cache/

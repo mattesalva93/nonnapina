@@ -7,8 +7,11 @@ import { dealsRouter } from './routes/deals.routes.js';
 import { productsRouter } from './routes/products.routes.js';
 import { publishRouter } from './routes/publish.routes.js';
 import { runScrapeJob, scrapeRouter } from './routes/scrape.routes.js';
+import { whatsappRouter } from './routes/whatsapp.routes.js';
 import { getActiveRun, prisma, startScrapeRun } from './services/product.service.js';
-import { runPublishCycle } from './services/publish.service.js';
+import { initPublishScheduler } from './services/scheduler.service.js';
+import { initWhatsApp } from './services/whatsapp.service.js';
+import { localISOString } from './utils/date.js';
 import { logger } from './utils/logger.js';
 
 const app = express();
@@ -28,7 +31,7 @@ app.use(requestLogger);
 app.get('/health', async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
-    res.json({ status: 'ok', timestamp: new Date().toISOString(), db: 'connected' });
+    res.json({ status: 'ok', timestamp: localISOString(), db: 'connected' });
   } catch {
     res.status(503).json({ status: 'error', db: 'disconnected' });
   }
@@ -38,6 +41,7 @@ app.use('/api/scrape', scrapeRouter);
 app.use('/api/products', productsRouter);
 app.use('/api/deals', dealsRouter);
 app.use('/api/publish', publishRouter);
+app.use('/api/whatsapp', whatsappRouter);
 
 // 404 handler
 app.use((_req, res) => {
@@ -52,6 +56,11 @@ app.use(errorHandler);
 const { cronSchedule } = config.server;
 
 if (config.server.nodeEnv !== 'test') {
+  // Initialize WhatsApp client (runs in background, does not block startup)
+  void initWhatsApp().catch(err => {
+    logger.error({ err: (err as Error).message }, 'WhatsApp initialization failed');
+  });
+
   cron.schedule(cronSchedule, () => {
     logger.info({ schedule: cronSchedule }, 'Scheduled scrape triggered');
     void (async () => {
@@ -73,19 +82,8 @@ if (config.server.nodeEnv !== 'test') {
   });
   logger.info({ schedule: cronSchedule }, 'Scrape cron job registered');
 
-  // ─── Scheduled publishing ────────────────────────────────────────────────
-  const { publishCronSchedule } = config.server;
-  cron.schedule(publishCronSchedule, () => {
-    logger.info({ schedule: publishCronSchedule }, 'Scheduled publish triggered');
-    void (async () => {
-      try {
-        await runPublishCycle();
-      } catch (err) {
-        logger.error({ err: (err as Error).message }, 'Scheduled publish failed');
-      }
-    })();
-  });
-  logger.info({ schedule: publishCronSchedule }, 'Publish cron job registered');
+  // ─── Scheduled publishing (randomised daily slots) ──────────────────────
+  initPublishScheduler();
 }
 
 // ─── Start server ─────────────────────────────────────────────────────────────
@@ -93,6 +91,28 @@ const { port } = config.server;
 
 app.listen(port, () => {
   logger.info({ port, env: config.server.nodeEnv }, `Server running on port ${port}`);
+
+  if (config.server.nodeEnv !== 'test') {
+    // Fire an initial scrape right after boot so the DB is always populated
+    void (async () => {
+      try {
+        const activeRun = await getActiveRun();
+        if (activeRun) {
+          logger.warn(
+            { scrapeRunId: activeRun.id },
+            'Initial scrape skipped — a job is already running'
+          );
+          return;
+        }
+        logger.info('Running initial scrape on startup...');
+        const run = await startScrapeRun();
+        await runScrapeJob(run.id);
+        logger.info({ scrapeRunId: run.id }, 'Initial scrape completed');
+      } catch (err) {
+        logger.error({ err: (err as Error).message }, 'Initial scrape failed');
+      }
+    })();
+  }
 });
 
 export { app };

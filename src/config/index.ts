@@ -6,7 +6,6 @@ const configSchema = z.object({
     port: z.number().int().positive().default(3000),
     nodeEnv: z.enum(['development', 'production', 'test']).default('development'),
     cronSchedule: z.string().default('15 8,20 * * *'),
-    publishCronSchedule: z.string().default('*/30 * * * *'),
   }),
   database: z.object({
     url: z.string().default(''),
@@ -40,6 +39,10 @@ const configSchema = z.object({
     botToken: z.string().default(''),
     chatId: z.string().default(''),
   }),
+  whatsapp: z.object({
+    channelId: z.string().default(''),
+    sessionDataPath: z.string().default('./.wwebjs_auth'),
+  }),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;
@@ -49,7 +52,6 @@ const rawConfig = {
     port: parseInt(process.env.PORT ?? '3000'),
     nodeEnv: (process.env.NODE_ENV ?? 'development') as 'development' | 'production' | 'test',
     cronSchedule: process.env.SCRAPE_CRON ?? '15 8,20 * * *',
-    publishCronSchedule: process.env.PUBLISH_CRON ?? '*/30 * * * *',
   },
   database: {
     url: process.env.DATABASE_URL ?? '',
@@ -82,6 +84,10 @@ const rawConfig = {
   telegram: {
     botToken: process.env.TELEGRAM_BOT_TOKEN ?? '',
     chatId: process.env.TELEGRAM_CHAT_ID ?? '',
+  },
+  whatsapp: {
+    channelId: process.env.WHATSAPP_CHANNEL_ID ?? '',
+    sessionDataPath: process.env.WHATSAPP_SESSION_PATH ?? './.wwebjs_auth',
   },
 };
 

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { config } from '../config/index.js';
 import type { AffiliateLinks, AmazonProduct, ApiItem, LinkOptions } from '../types/index.js';
+import { localISOString } from '../utils/date.js';
 
 const MARKETPLACE_URLS: Record<string, string> = {
   IT: 'www.amazon.it',
@@ -214,7 +215,7 @@ class AmazonService {
         customerReviews: product.customerReviews ?? undefined,
         detailPageURL: product.detailPageURL,
       },
-      fetchedAt: new Date().toISOString(),
+      fetchedAt: localISOString(),
       marketplace: config.amazon.marketplace,
     };
   }

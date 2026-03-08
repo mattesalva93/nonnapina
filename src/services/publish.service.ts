@@ -2,24 +2,32 @@ import axios from 'axios';
 import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
 import { prisma } from './product.service.js';
+import { sendToWhatsAppChannel } from './whatsapp.service.js';
 
 // ─── Scoring formula ──────────────────────────────────────────────────────────
-// Weighted confidence score: rating * (1 - e^(-reviewCount / k))
-// k = 30 means: at 30 reviews → ~63% confidence, 90 → ~95%, 150 → ~99%
-// After the confidence threshold, score ≈ rating itself, so high-rating
-// products with enough reviews naturally float to the top.
+// Combines the weighted confidence score with discount percentage.
+// Both components are normalized to 0–1 and then combined with:
+//   W_DISCOUNT    = 0.6  (discount is the dominant factor)
+//   W_CONFIDENCE  = 0.4  (rating with review-count confidence adds context)
 //
-// Verification with the user's examples:
-//   4.1 rating / 402 reviews → 4.10  >  4.9 / 12  → 1.62  ✓
-//   3.5 rating / 502 reviews → 3.50  <  4.3 / 100 → 4.15  ✓
+// normalizedDiscount   = clamp(discount, 0..100) / 100
+// confidence           = 1 - e^(-reviewCount / K)              K = 30
+// normalizedConfidence = rating * confidence / 5
+const W_DISCOUNT = 0.6;
+const W_CONFIDENCE = 0.4;
+const MAX_RATING = 5;
 const CONFIDENCE_K = 30;
 
-export function computeDealScore(rating: number, reviewCount: number): number {
+export function computeDealScore(discount: number, rating: number, reviewCount: number): number {
+  const normalizedDiscount = Math.min(Math.max(discount, 0), 100) / 100;
   const confidence = 1 - Math.exp(-reviewCount / CONFIDENCE_K);
-  return rating * confidence;
+  const normalizedConfidence = (rating * confidence) / MAX_RATING;
+  return W_DISCOUNT * normalizedDiscount + W_CONFIDENCE * normalizedConfidence;
 }
 
 // ─── Deal selection ───────────────────────────────────────────────────────────
+
+const TOP_POOL_SIZE = 5;
 
 export async function selectNextDeal() {
   const candidates = await prisma.deal.findMany({
@@ -27,6 +35,7 @@ export async function selectNextDeal() {
       published: false,
       rating: { not: null },
       reviewCount: { not: null, gt: 0 },
+      discount: { not: null, gt: 0 },
       price: { not: null },
       affiliateWeb: { not: null },
     },
@@ -37,23 +46,24 @@ export async function selectNextDeal() {
 
   if (candidates.length === 0) return undefined;
 
-  let bestDeal = candidates[0];
-  let bestScore = -1;
+  // Score all candidates and sort descending
+  const scored = candidates
+    .map(deal => ({
+      deal,
+      score: computeDealScore(deal.discount!, deal.rating!, deal.reviewCount!),
+    }))
+    .sort((a, b) => b.score - a.score);
 
-  for (const deal of candidates) {
-    const score = computeDealScore(deal.rating!, deal.reviewCount!);
-    if (score > bestScore) {
-      bestScore = score;
-      bestDeal = deal;
-    }
-  }
+  // Pick randomly from the top pool to avoid a predictable descending pattern
+  const poolSize = Math.min(TOP_POOL_SIZE, scored.length);
+  const pick = scored[Math.floor(Math.random() * poolSize)];
 
   logger.info(
-    { dealId: bestDeal.id, asin: bestDeal.asin, score: bestScore.toFixed(2) },
-    'Selected next deal for publishing'
+    { dealId: pick.deal.id, asin: pick.deal.asin, score: pick.score.toFixed(2), poolSize },
+    'Selected next deal for publishing (random from top pool)'
   );
 
-  return bestDeal;
+  return pick.deal;
 }
 
 // ─── Post template builder ───────────────────────────────────────────────────
@@ -107,8 +117,7 @@ export function buildPostContent(deal: {
   return lines.join('\n');
 }
 
-// ─── Channel dispatchers (stubs) ─────────────────────────────────────────────
-// These will be replaced with actual WhatsApp/Telegram API integrations later.
+// ─── Channel dispatchers ─────────────────────────────────────────────────────
 
 export type ChannelName = 'WHATSAPP' | 'TELEGRAM';
 
@@ -124,12 +133,11 @@ interface ChannelPayload {
 }
 
 async function publishToWhatsApp(payload: ChannelPayload): Promise<ChannelResult> {
-  // TODO: integrate with WhatsApp Business API or web bridge
-  logger.info(
-    { channel: 'WHATSAPP', length: payload.postContent.length },
-    'Publishing to WhatsApp (stub)'
-  );
-  return { channel: 'WHATSAPP', success: true };
+  const result = await sendToWhatsAppChannel(payload.postContent, payload.imageUrl);
+  if (!result.success) {
+    logger.error({ channel: 'WHATSAPP', error: result.error }, 'WhatsApp publish failed');
+  }
+  return { channel: 'WHATSAPP', success: result.success, error: result.error };
 }
 
 // ─── Telegram dispatcher ─────────────────────────────────────────────────────
@@ -207,13 +215,29 @@ async function publishToTelegram(payload: ChannelPayload): Promise<ChannelResult
   }
 }
 
-const CHANNELS: Array<{
+interface ChannelDef {
   name: ChannelName;
   send: (payload: ChannelPayload) => Promise<ChannelResult>;
-}> = [
-  { name: 'WHATSAPP', send: publishToWhatsApp },
-  { name: 'TELEGRAM', send: publishToTelegram },
-];
+}
+
+/**
+ * Build the active channels list dynamically.
+ * A channel is only included if it has the minimum configuration.
+ * This prevents unconfigured channels from blocking the published flag.
+ */
+function getActiveChannels(): ChannelDef[] {
+  const channels: ChannelDef[] = [];
+
+  if (config.telegram.botToken && config.telegram.chatId) {
+    channels.push({ name: 'TELEGRAM', send: publishToTelegram });
+  }
+
+  if (config.whatsapp.channelId) {
+    channels.push({ name: 'WHATSAPP', send: publishToWhatsApp });
+  }
+
+  return channels;
+}
 
 // ─── Orchestration ────────────────────────────────────────────────────────────
 
@@ -235,9 +259,15 @@ export async function runPublishCycle(): Promise<PublishResult | undefined> {
   const postContent = buildPostContent(deal);
   const imageUrl = deal.product.imageLarge ?? deal.product.imageSmall ?? undefined;
 
-  // Dispatch to all channels
+  // Dispatch to all active channels
+  const activeChannels = getActiveChannels();
+  if (activeChannels.length === 0) {
+    logger.warn('No channels configured — skipping publish');
+    return undefined;
+  }
+
   const results: ChannelResult[] = [];
-  for (const channel of CHANNELS) {
+  for (const channel of activeChannels) {
     try {
       const result = await channel.send({ postContent, imageUrl });
       results.push(result);
@@ -262,18 +292,21 @@ export async function runPublishCycle(): Promise<PublishResult | undefined> {
     });
   }
 
-  // Mark deal as published only if ALL channels succeeded
+  // Mark deal as published if at least one channel succeeded
+  const anySucceeded = results.some(r => r.success);
   const allSucceeded = results.every(r => r.success);
-  if (allSucceeded) {
+  if (anySucceeded) {
     await prisma.deal.update({
       where: { id: deal.id },
       data: { published: true },
     });
     logger.info({ dealId: deal.id, asin: deal.asin }, 'Deal marked as published');
-  } else {
+  }
+
+  if (!allSucceeded) {
     logger.warn(
       { dealId: deal.id, failures: results.filter(r => !r.success).map(r => r.channel) },
-      'Deal NOT marked as published — some channels failed'
+      'Some channels failed during publish'
     );
   }
 
