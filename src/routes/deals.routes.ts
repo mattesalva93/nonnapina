@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { getDeals } from '../services/product.service.js';
+import { createComponentLogger } from '../utils/logger.js';
 
+const logger = createComponentLogger('DealsRoutes');
 export const dealsRouter = Router();
 
 /**
@@ -24,6 +26,10 @@ dealsRouter.get('/', async (req, res, next) => {
     const offset = Number.isNaN(rawOffset) || rawOffset < 0 ? 0 : rawOffset;
 
     const deals = await getDeals({ category, scrapeRunId, limit, offset });
+    logger.info(
+      { count: deals.length, category, scrapeRunId, limit, offset },
+      'Deals query completed'
+    );
     res.json({ data: deals, limit, offset, count: deals.length });
   } catch (err) {
     next(err);

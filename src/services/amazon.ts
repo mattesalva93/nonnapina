@@ -2,6 +2,10 @@ import axios from 'axios';
 import { config } from '../config/index.js';
 import type { AffiliateLinks, AmazonProduct, ApiItem, LinkOptions } from '../types/index.js';
 import { localISOString } from '../utils/date.js';
+import { createComponentLogger } from '../utils/logger.js';
+import { sendErrorAlert } from './email.service.js';
+
+const logger = createComponentLogger('AmazonService');
 
 const MARKETPLACE_URLS: Record<string, string> = {
   IT: 'www.amazon.it',
@@ -43,9 +47,11 @@ class AmazonService {
 
   async getAccessToken(): Promise<string> {
     if (this.accessToken && this.tokenExpiry && Date.now() < this.tokenExpiry) {
+      logger.debug('Using cached Amazon access token');
       return this.accessToken;
     }
 
+    logger.info('Requesting new Amazon OAuth access token');
     const credentials = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
 
     const response = await axios.post<{ access_token?: string; expires_in: number }>(
@@ -61,17 +67,25 @@ class AmazonService {
     );
 
     if (!response.data?.access_token) {
-      throw new Error('No access token in response');
+      const err = new Error('No access token in response');
+      logger.error('Amazon OAuth response missing access_token');
+      void sendErrorAlert({
+        errorMessage: err.message,
+        component: 'AmazonService',
+        severity: 'critical',
+      });
+      throw err;
     }
 
     this.accessToken = response.data.access_token;
     this.tokenExpiry = Date.now() + response.data.expires_in * 1000 - 300000;
+    logger.info('Amazon OAuth access token acquired');
 
     return this.accessToken;
   }
 
   async getProductDetails(asins: string[], options: LinkOptions = {}): Promise<AmazonProduct[]> {
-    console.log(`\n🔍 Fetching details for ${asins.length} products from Amazon Creators API...`);
+    logger.info({ asinCount: asins.length }, 'Fetching product details from Amazon Creators API');
 
     const BATCH_SIZE = 10;
     const batches = this.chunkArray(asins, BATCH_SIZE);
@@ -79,22 +93,33 @@ class AmazonService {
 
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
-      console.log(`📦 Processing batch ${i + 1}/${batches.length} (${batch.length} items)`);
+      logger.info(
+        { batch: i + 1, total: batches.length, batchSize: batch.length },
+        'Processing Amazon API batch'
+      );
 
       try {
         const products = await this.fetchProductBatch(batch, options);
         allProducts.push(...products);
-        console.log(`✅ Fetched ${products.length} items`);
+        logger.info({ batch: i + 1, fetched: products.length }, 'Amazon API batch completed');
 
         if (i < batches.length - 1) {
           await this.sleep(1000);
         }
       } catch (error) {
-        console.error(`❌ Error fetching batch ${i + 1}:`, (error as Error).message);
+        const message = (error as Error).message;
+        logger.error({ batch: i + 1, error: message }, 'Amazon API batch failed');
+        void sendErrorAlert({
+          errorMessage: `Amazon API batch ${i + 1}/${batches.length} failed: ${message}`,
+          errorStack: (error as Error).stack,
+          component: 'AmazonService',
+          severity: 'error',
+          additionalData: { batch: i + 1, totalBatches: batches.length, asins: batch },
+        });
       }
     }
 
-    console.log(`\n🎉 Successfully fetched ${allProducts.length} products from Amazon`);
+    logger.info({ totalFetched: allProducts.length }, 'Amazon product fetch complete');
     return allProducts;
   }
 
@@ -277,7 +302,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   amazonService
     .getProductDetails(testAsins)
     .then(products => {
-      console.log('\n✅ Test completed: fetched', products.length, 'products');
+      logger.info({ count: products.length }, 'Standalone test completed');
     })
-    .catch(console.error);
+    .catch(err => logger.error(err));
 }

@@ -2,7 +2,9 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import 'dotenv/config';
 import type { EnrichedProduct } from '../types/index.js';
-import { logger } from '../utils/logger.js';
+import { createComponentLogger } from '../utils/logger.js';
+
+const logger = createComponentLogger('ProductService');
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -10,10 +12,13 @@ const prisma = new PrismaClient({ adapter });
 export { prisma };
 
 export async function startScrapeRun() {
-  return prisma.scrapeRun.create({ data: {} });
+  const run = await prisma.scrapeRun.create({ data: {} });
+  logger.info({ scrapeRunId: run.id }, 'Scrape run created');
+  return run;
 }
 
 export async function completeScrapeRun(id: string, totalDeals: number) {
+  logger.info({ scrapeRunId: id, totalDeals }, 'Completing scrape run');
   return prisma.scrapeRun.update({
     where: { id },
     data: { status: 'COMPLETED', completedAt: new Date(), totalDeals },
@@ -21,6 +26,7 @@ export async function completeScrapeRun(id: string, totalDeals: number) {
 }
 
 export async function failScrapeRun(id: string, errorMessage: string) {
+  logger.error({ scrapeRunId: id, errorMessage }, 'Marking scrape run as FAILED');
   return prisma.scrapeRun.update({
     where: { id },
     data: { status: 'FAILED', completedAt: new Date(), errorMessage },

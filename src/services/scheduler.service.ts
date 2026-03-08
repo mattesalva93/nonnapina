@@ -1,8 +1,11 @@
 import cron from 'node-cron';
 import { localISOString } from '../utils/date.js';
-import { logger } from '../utils/logger.js';
+import { createComponentLogger } from '../utils/logger.js';
+import { sendErrorAlert } from './email.service.js';
 import { runPublishCycle } from './publish.service.js';
 import { runTop5PublishCycle } from './top5.service.js';
+
+const logger = createComponentLogger('Scheduler');
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 // Publish window: 06:00 – 22:59 (23:00 is the exclusive upper bound)
@@ -73,7 +76,15 @@ export function initPublishScheduler(): void {
         try {
           await runPublishCycle();
         } catch (err) {
-          logger.error({ err: (err as Error).message }, 'Scheduled publish failed');
+          const message = (err as Error).message;
+          logger.error({ err: message, slot }, 'Scheduled publish failed');
+          void sendErrorAlert({
+            errorMessage: `Scheduled publish failed at slot ${slot}: ${message}`,
+            errorStack: (err as Error).stack,
+            component: 'ScheduledPublish',
+            severity: 'error',
+            additionalData: { slot },
+          });
         }
       })();
     }
@@ -86,7 +97,14 @@ export function initPublishScheduler(): void {
       try {
         await runTop5PublishCycle();
       } catch (err) {
-        logger.error({ err: (err as Error).message }, 'Scheduled top 5 publish failed');
+        const message = (err as Error).message;
+        logger.error({ err: message }, 'Scheduled top 5 publish failed');
+        void sendErrorAlert({
+          errorMessage: `Scheduled top 5 publish failed: ${message}`,
+          errorStack: (err as Error).stack,
+          component: 'ScheduledTop5Publish',
+          severity: 'error',
+        });
       }
     })();
   });

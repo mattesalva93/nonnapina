@@ -1,9 +1,12 @@
 import axios from 'axios';
 import { config } from '../config/index.js';
-import { logger } from '../utils/logger.js';
+import { createComponentLogger } from '../utils/logger.js';
+import { sendErrorAlert } from './email.service.js';
 import { generateTop5Image, type Top5ImageDeal } from './image.service.js';
 import { prisma } from './product.service.js';
 import { sendBufferToWhatsAppChannel, sendToWhatsAppChannel } from './whatsapp.service.js';
+
+const logger = createComponentLogger('Top5Service');
 
 // ─── Top 5 scoring formula ───────────────────────────────────────────────────
 // Combines the weighted confidence score with discount percentage.
@@ -254,6 +257,12 @@ export async function runTop5PublishCycle(): Promise<Top5PublishResult | undefin
       { error: (err as Error).message },
       'Top 5 image generation failed — sending text only'
     );
+    void sendErrorAlert({
+      errorMessage: `Top 5 image generation failed: ${(err as Error).message}`,
+      errorStack: (err as Error).stack,
+      component: 'Top5Service',
+      severity: 'warning',
+    });
   }
 
   // Build active channels list
@@ -308,6 +317,16 @@ export async function runTop5PublishCycle(): Promise<Top5PublishResult | undefin
   }
 
   const allSucceeded = results.every(r => r.success);
+  if (!allSucceeded) {
+    for (const failure of results.filter(r => !r.success)) {
+      void sendErrorAlert({
+        errorMessage: `Top 5 publish failed on channel ${failure.channel}: ${failure.error ?? 'Unknown error'}`,
+        component: 'Top5Service',
+        severity: 'error',
+        additionalData: { channel: failure.channel, dealCount: deals.length },
+      });
+    }
+  }
   const dealScores = deals.map(d => ({
     asin: d.asin,
     discount: d.discount,

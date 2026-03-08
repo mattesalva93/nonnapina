@@ -10,3 +10,11 @@ export const logger = pino({
       ? { target: 'pino-pretty', options: { colorize: true, translateTime: 'HH:MM:ss' } }
       : undefined,
 });
+
+/**
+ * Creates a child logger pre-bound with a component name.
+ * Usage: `const log = createComponentLogger('KeepaService');`
+ */
+export function createComponentLogger(component: string) {
+  return logger.child({ component });
+}

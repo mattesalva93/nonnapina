@@ -43,6 +43,16 @@ const configSchema = z.object({
     channelId: z.string().default(''),
     sessionDataPath: z.string().default('./.wwebjs_auth'),
   }),
+  email: z.object({
+    smtpHost: z.string().default(''),
+    smtpPort: z.number().int().positive().default(587),
+    smtpSecure: z.boolean().default(false),
+    smtpUser: z.string().default(''),
+    smtpPass: z.string().default(''),
+    alertFrom: z.string().default(''),
+    alertTo: z.string().default(''),
+    alertCc: z.array(z.string()).default([]),
+  }),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;
@@ -88,6 +98,19 @@ const rawConfig = {
   whatsapp: {
     channelId: process.env.WHATSAPP_CHANNEL_ID ?? '',
     sessionDataPath: process.env.WHATSAPP_SESSION_PATH ?? './.wwebjs_auth',
+  },
+  email: {
+    smtpHost: process.env.SMTP_HOST ?? '',
+    smtpPort: parseInt(process.env.SMTP_PORT ?? '587'),
+    smtpSecure: process.env.SMTP_SECURE === 'true',
+    smtpUser: process.env.SMTP_USER ?? '',
+    smtpPass: process.env.SMTP_PASS ?? '',
+    alertFrom: process.env.ALERT_EMAIL_FROM ?? '',
+    alertTo: process.env.ALERT_EMAIL_TO ?? '',
+    alertCc:
+      process.env.ALERT_EMAIL_CC?.split(',')
+        .map(e => e.trim())
+        .filter(Boolean) ?? [],
   },
 };
 

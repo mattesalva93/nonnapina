@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { config } from '../config/index.js';
 import { scrapeKeepaDeals } from '../scrapers/keepa.js';
 import { amazonService } from '../services/amazon.js';
+import { sendErrorAlert } from '../services/email.service.js';
 import {
   completeScrapeRun,
   failScrapeRun,
@@ -12,7 +13,9 @@ import {
   startScrapeRun,
 } from '../services/product.service.js';
 import type { EnrichedProduct, KeepaProduct } from '../types/index.js';
-import { logger } from '../utils/logger.js';
+import { createComponentLogger } from '../utils/logger.js';
+
+const logger = createComponentLogger('ScrapeRoutes');
 
 export const scrapeRouter = Router();
 
@@ -22,7 +25,9 @@ export const scrapeRouter = Router();
  */
 scrapeRouter.get('/', async (_req, res, next) => {
   try {
+    logger.debug('Listing scrape runs');
     const runs = await getScrapeRuns();
+    logger.info({ count: runs.length }, 'Scrape runs listed');
     res.json(runs);
   } catch (err) {
     next(err);
@@ -35,8 +40,11 @@ scrapeRouter.get('/', async (_req, res, next) => {
  */
 scrapeRouter.get('/:id', async (req, res, next) => {
   try {
-    const run = await getScrapeRunById(req.params.id);
+    const { id } = req.params;
+    logger.debug({ scrapeRunId: id }, 'Fetching scrape run by ID');
+    const run = await getScrapeRunById(id);
     if (!run) {
+      logger.warn({ scrapeRunId: id }, 'Scrape run not found');
       res.status(404).json({ error: 'Scrape run not found' });
       return;
     }
@@ -125,6 +133,13 @@ export async function runScrapeJob(scrapeRunId: string): Promise<void> {
     const message = err instanceof Error ? err.message : String(err);
     await failScrapeRun(scrapeRunId, message);
     logger.error({ scrapeRunId, error: message }, 'Scrape job failed');
+    void sendErrorAlert({
+      errorMessage: `Scrape job failed: ${message}`,
+      errorStack: err instanceof Error ? err.stack : undefined,
+      component: 'ScrapeJob',
+      severity: 'critical',
+      scrapeRunId,
+    });
     throw err;
   }
 }

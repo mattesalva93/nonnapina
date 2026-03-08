@@ -1,11 +1,14 @@
 import { Router } from 'express';
 import { getWhatsAppStatus, listChannels } from '../services/whatsapp.service.js';
+import { createComponentLogger } from '../utils/logger.js';
 
+const logger = createComponentLogger('WhatsAppRoutes');
 export const whatsappRouter = Router();
 
 // GET /api/whatsapp/status — Current connection state
 whatsappRouter.get('/status', (_req, res) => {
   const status = getWhatsAppStatus();
+  logger.debug({ status: status.status }, 'WhatsApp status queried');
   res.json(status);
 });
 

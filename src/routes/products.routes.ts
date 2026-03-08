@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { getProductByAsin, getProducts } from '../services/product.service.js';
+import { createComponentLogger } from '../utils/logger.js';
 
+const logger = createComponentLogger('ProductsRoutes');
 export const productsRouter = Router();
 
 /**
@@ -15,6 +17,7 @@ productsRouter.get('/', async (req, res, next) => {
     const limit = Math.min(Number.isNaN(rawLimit) || rawLimit < 0 ? 50 : rawLimit, 200);
     const offset = Number.isNaN(rawOffset) || rawOffset < 0 ? 0 : rawOffset;
     const products = await getProducts({ limit, offset });
+    logger.info({ count: products.length, limit, offset }, 'Products query completed');
     res.json({ data: products, limit, offset, count: products.length });
   } catch (err) {
     next(err);

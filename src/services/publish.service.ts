@@ -1,8 +1,11 @@
 import axios from 'axios';
 import { config } from '../config/index.js';
-import { logger } from '../utils/logger.js';
+import { createComponentLogger } from '../utils/logger.js';
+import { sendErrorAlert } from './email.service.js';
 import { prisma } from './product.service.js';
 import { sendToWhatsAppChannel } from './whatsapp.service.js';
+
+const logger = createComponentLogger('PublishService');
 
 // ─── Scoring formula ──────────────────────────────────────────────────────────
 // Combines the weighted confidence score with discount percentage.
@@ -168,7 +171,6 @@ async function publishToTelegram(payload: ChannelPayload): Promise<ChannelResult
           chat_id: chatId,
           photo: imageUrl,
           caption: postContent,
-          parse_mode: 'HTML',
         },
         { timeout: 15000 }
       );
@@ -304,10 +306,23 @@ export async function runPublishCycle(): Promise<PublishResult | undefined> {
   }
 
   if (!allSucceeded) {
+    const failedChannels = results.filter(r => !r.success);
     logger.warn(
-      { dealId: deal.id, failures: results.filter(r => !r.success).map(r => r.channel) },
+      { dealId: deal.id, failures: failedChannels.map(r => r.channel) },
       'Some channels failed during publish'
     );
+    for (const failure of failedChannels) {
+      void sendErrorAlert({
+        errorMessage: `Publish failed on channel ${failure.channel}: ${failure.error ?? 'Unknown error'}`,
+        component: 'PublishService',
+        severity: 'error',
+        additionalData: {
+          dealId: deal.id,
+          asin: deal.asin,
+          channel: failure.channel,
+        },
+      });
+    }
   }
 
   return {

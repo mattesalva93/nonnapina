@@ -1,8 +1,9 @@
 import type { Channel, Client as ClientType } from 'whatsapp-web.js';
 import pkg from 'whatsapp-web.js';
 import { config } from '../config/index.js';
-import { logger } from '../utils/logger.js';
+import { createComponentLogger } from '../utils/logger.js';
 
+const logger = createComponentLogger('WhatsAppService');
 const { Client, LocalAuth, MessageMedia } = pkg;
 
 // ─── State ───────────────────────────────────────────────────────────────────

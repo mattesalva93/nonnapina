@@ -8,8 +8,9 @@ import {
   runTop5PublishCycle,
   selectTop5Deals,
 } from '../services/top5.service.js';
-import { logger } from '../utils/logger.js';
+import { createComponentLogger } from '../utils/logger.js';
 
+const logger = createComponentLogger('PublishRoutes');
 export const publishRouter = Router();
 
 /**

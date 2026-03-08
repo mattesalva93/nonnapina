@@ -1,6 +1,8 @@
 import axios from 'axios';
 import sharp from 'sharp';
-import { logger } from '../utils/logger.js';
+import { createComponentLogger } from '../utils/logger.js';
+
+const logger = createComponentLogger('ImageService');
 
 // ─── Layout constants ─────────────────────────────────────────────────────────
 
