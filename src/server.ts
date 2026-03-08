@@ -82,17 +82,21 @@ app.use(errorHandler);
 const { cronSchedule } = config.server;
 
 if (config.server.nodeEnv !== 'test') {
-  // Initialize WhatsApp client (runs in background, does not block startup)
-  void initWhatsApp().catch(err => {
-    const message = (err as Error).message;
-    logger.error({ err: message }, 'WhatsApp initialization failed');
-    void sendErrorAlert({
-      errorMessage: `WhatsApp initialization failed: ${message}`,
-      errorStack: (err as Error).stack,
-      component: 'WhatsAppInit',
-      severity: 'error',
+  // Initialize WhatsApp client only when a channel is configured
+  if (config.whatsapp.channelId) {
+    void initWhatsApp().catch(err => {
+      const message = (err as Error).message;
+      logger.error({ err: message }, 'WhatsApp initialization failed');
+      void sendErrorAlert({
+        errorMessage: `WhatsApp initialization failed: ${message}`,
+        errorStack: (err as Error).stack,
+        component: 'WhatsAppInit',
+        severity: 'error',
+      });
     });
-  });
+  } else {
+    logger.info('WhatsApp not configured (WHATSAPP_CHANNEL_ID unset) — skipping initialization');
+  }
 
   cron.schedule(cronSchedule, () => {
     logger.info({ schedule: cronSchedule }, 'Scheduled scrape triggered');

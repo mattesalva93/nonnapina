@@ -6,12 +6,13 @@ const logger = createComponentLogger('ImageService');
 
 // ─── Layout constants ─────────────────────────────────────────────────────────
 
-const CANVAS_WIDTH = 1080;
+const CANVAS_WIDTH = 1200;
 const BANNER_HEIGHT = 120;
-const IMAGE_SIZE = 180;
-const IMAGE_GAP = 20;
+const IMAGE_SIZE = 240;
+const IMAGE_GAP = 30;
 const IMAGE_PADDING_Y = 30;
-const BADGE_DIAMETER = 56;
+const ROW_GAP = 40;
+const BADGE_DIAMETER = 64;
 
 // ─── SVG builders ─────────────────────────────────────────────────────────────
 
@@ -80,9 +81,21 @@ export interface Top5ImageDeal {
 
 export async function generateTop5Image(deals: Top5ImageDeal[]): Promise<Buffer> {
   const count = deals.length;
-  const contentWidth = count * IMAGE_SIZE + (count - 1) * IMAGE_GAP;
-  const sidePadding = Math.round((CANVAS_WIDTH - contentWidth) / 2);
-  const canvasHeight = BANNER_HEIGHT + IMAGE_PADDING_Y * 2 + IMAGE_SIZE;
+  const firstRowCount = Math.min(3, count);
+  const secondRowCount = count - firstRowCount;
+
+  const firstRowWidth = firstRowCount * IMAGE_SIZE + Math.max(0, firstRowCount - 1) * IMAGE_GAP;
+  const secondRowWidth =
+    secondRowCount > 0
+      ? secondRowCount * IMAGE_SIZE + Math.max(0, secondRowCount - 1) * IMAGE_GAP
+      : 0;
+
+  const canvasHeight =
+    BANNER_HEIGHT +
+    IMAGE_PADDING_Y +
+    IMAGE_SIZE +
+    (secondRowCount > 0 ? ROW_GAP + IMAGE_SIZE : 0) +
+    IMAGE_PADDING_Y;
 
   // Download and resize all product images
   const productImages: Buffer[] = [];
@@ -111,16 +124,33 @@ export async function generateTop5Image(deals: Top5ImageDeal[]): Promise<Buffer>
     { input: createBannerSvg(CANVAS_WIDTH, BANNER_HEIGHT), top: 0, left: 0 },
   ];
 
-  for (let i = 0; i < count; i++) {
-    const x = sidePadding + i * (IMAGE_SIZE + IMAGE_GAP);
-    const y = BANNER_HEIGHT + IMAGE_PADDING_Y;
-
-    composites.push({ input: productImages[i], top: y, left: x });
+  // First row (centered)
+  const firstRowLeft = Math.round((CANVAS_WIDTH - firstRowWidth) / 2);
+  const firstRowY = BANNER_HEIGHT + IMAGE_PADDING_Y;
+  for (let i = 0; i < firstRowCount; i++) {
+    const x = firstRowLeft + i * (IMAGE_SIZE + IMAGE_GAP);
+    composites.push({ input: productImages[i], top: firstRowY, left: x });
     composites.push({
       input: createBadgeSvg(deals[i].discount),
-      top: y - 8,
+      top: firstRowY - 8,
       left: x + IMAGE_SIZE - BADGE_DIAMETER + 8,
     });
+  }
+
+  // Second row (centered)
+  if (secondRowCount > 0) {
+    const secondRowLeft = Math.round((CANVAS_WIDTH - secondRowWidth) / 2);
+    const secondRowY = firstRowY + IMAGE_SIZE + ROW_GAP;
+    for (let i = 0; i < secondRowCount; i++) {
+      const x = secondRowLeft + i * (IMAGE_SIZE + IMAGE_GAP);
+      const idx = firstRowCount + i;
+      composites.push({ input: productImages[idx], top: secondRowY, left: x });
+      composites.push({
+        input: createBadgeSvg(deals[idx].discount),
+        top: secondRowY - 8,
+        left: x + IMAGE_SIZE - BADGE_DIAMETER + 8,
+      });
+    }
   }
 
   const image = await sharp({

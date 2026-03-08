@@ -61,43 +61,39 @@ export async function saveProducts(
       },
     });
 
-    // Deduplication: skip if the most recent deal for this ASIN has the same price, discount and category
-    const lastDeal = await prisma.deal.findFirst({
+    // Upsert deal: update existing deal for same ASIN, or create a new one
+    const existingDeal = await prisma.deal.findFirst({
       where: { asin: product.asin },
       orderBy: { fetchedAt: 'desc' },
-      select: { price: true, discount: true, category: true },
     });
 
-    if (lastDeal) {
-      const sameValue = (a: number | null | undefined, b: number | null | undefined): boolean =>
-        (a ?? undefined) === (b ?? undefined);
+    const dealData = {
+      category: product.category,
+      price: product.price,
+      currency: product.currency ?? 'EUR',
+      avgPrice: product.keepaAvgPrice,
+      currentPrice: product.keepaCurrentPrice,
+      discount: product.keepaDiscount,
+      rating: product.rating ?? product.keepaRating,
+      reviewCount: product.ratingCount ?? product.keepaReviewCount,
+      affiliateWeb: product.affiliateLinks.web,
+      affiliateStore: product.affiliateLinks.storefront,
+    };
 
-      if (
-        sameValue(lastDeal.price, product.price) &&
-        sameValue(lastDeal.discount, product.keepaDiscount) &&
-        lastDeal.category === product.category
-      ) {
-        logger.debug({ asin: product.asin }, 'Skipping duplicate deal — no change detected');
-        continue;
-      }
+    if (existingDeal) {
+      await prisma.deal.update({
+        where: { id: existingDeal.id },
+        data: { ...dealData, scrapeRunId, fetchedAt: new Date() },
+      });
+      logger.debug(
+        { asin: product.asin, dealId: existingDeal.id },
+        'Deal updated with latest scrape data'
+      );
+    } else {
+      await prisma.deal.create({
+        data: { asin: product.asin, scrapeRunId, ...dealData },
+      });
     }
-
-    await prisma.deal.create({
-      data: {
-        asin: product.asin,
-        scrapeRunId,
-        category: product.category,
-        price: product.price,
-        currency: product.currency ?? 'EUR',
-        avgPrice: product.keepaAvgPrice,
-        currentPrice: product.keepaCurrentPrice,
-        discount: product.keepaDiscount,
-        rating: product.rating ?? product.keepaRating,
-        reviewCount: product.ratingCount ?? product.keepaReviewCount,
-        affiliateWeb: product.affiliateLinks.web,
-        affiliateStore: product.affiliateLinks.storefront,
-      },
-    });
     savedCount++;
   }
 

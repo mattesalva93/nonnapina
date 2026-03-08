@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildTop5PostContent, computeTop5Score } from './top5.service.js';
+import { buildTop5PostContent, computeTop5Score, normalizeTitleForDedup } from './top5.service.js';
 
 // ─── computeTop5Score ─────────────────────────────────────────────────────────
 
@@ -57,6 +57,29 @@ describe('computeTop5Score', () => {
   });
 });
 
+// ─── normalizeTitleForDedup ───────────────────────────────────────────────────
+
+describe('normalizeTitleForDedup', () => {
+  it('removes trailing parenthesized variant info', () => {
+    const result = normalizeTitleForDedup('Faszin Asciugacapelli Professionale (Grigio)');
+    expect(result).toBe('faszin asciugacapelli professionale');
+  });
+
+  it('removes only the last parenthesized group', () => {
+    const result = normalizeTitleForDedup('Product (Feature) Model (Nero)');
+    expect(result).toBe('product (feature) model');
+  });
+
+  it('returns lowercased trimmed title when no trailing parentheses', () => {
+    const result = normalizeTitleForDedup('Some Product Title');
+    expect(result).toBe('some product title');
+  });
+
+  it('handles empty string', () => {
+    expect(normalizeTitleForDedup('')).toBe('');
+  });
+});
+
 // ─── buildTop5PostContent ─────────────────────────────────────────────────────
 
 describe('buildTop5PostContent', () => {
@@ -88,10 +111,11 @@ describe('buildTop5PostContent', () => {
     expect(content).toContain('TOP 5 OFFERTE DEL GIORNO');
   });
 
-  it('numbers each deal', () => {
+  it('lists deals without numbering', () => {
     const content = buildTop5PostContent(mockDeals);
-    expect(content).toContain('1. 💬 Product One');
-    expect(content).toContain('2. 💬 Product Two');
+    expect(content).toContain('💬 Product One');
+    expect(content).toContain('💬 Product Two');
+    expect(content).not.toMatch(/^\d+\./m);
   });
 
   it('shows discount price line when discount info is available', () => {

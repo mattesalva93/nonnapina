@@ -38,6 +38,13 @@ export function computeTop5Score(discount: number, rating: number, reviewCount: 
 
 // ─── Deal selection ───────────────────────────────────────────────────────────
 
+export function normalizeTitleForDedup(title: string): string {
+  return title
+    .replace(/\s*\([^)]*\)\s*$/g, '')
+    .toLowerCase()
+    .trim();
+}
+
 export async function selectTop5Deals() {
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -64,12 +71,38 @@ export async function selectTop5Deals() {
     }))
     .sort((a, b) => b.score - a.score);
 
-  const top5 = scored.slice(0, TOP_5_COUNT);
+  // Deduplicate by ASIN (keep highest scored entry)
+  const byAsin = new Map<string, (typeof scored)[0]>();
+  for (const item of scored) {
+    if (!byAsin.has(item.deal.asin)) {
+      byAsin.set(item.deal.asin, item);
+    }
+  }
+  const uniqueByAsin = [...byAsin.values()].sort((a, b) => b.score - a.score);
+
+  // Deduplicate by product variant (parentAsin or similar base title)
+  const selected: (typeof scored)[0][] = [];
+  const usedParentAsins = new Set<string>();
+  const usedTitleBases = new Set<string>();
+
+  for (const item of uniqueByAsin) {
+    if (selected.length >= TOP_5_COUNT) break;
+
+    const parentAsin = item.deal.product.parentAsin;
+    if (parentAsin && usedParentAsins.has(parentAsin)) continue;
+
+    const titleBase = normalizeTitleForDedup(item.deal.product.title);
+    if (usedTitleBases.has(titleBase)) continue;
+
+    selected.push(item);
+    if (parentAsin) usedParentAsins.add(parentAsin);
+    usedTitleBases.add(titleBase);
+  }
 
   logger.info(
     {
-      count: top5.length,
-      deals: top5.map(d => ({
+      count: selected.length,
+      deals: selected.map(d => ({
         asin: d.deal.asin,
         discount: d.deal.discount,
         rating: d.deal.rating,
@@ -80,7 +113,7 @@ export async function selectTop5Deals() {
     'Selected top 5 deals of the day'
   );
 
-  return top5.map(d => d.deal);
+  return selected.map(d => d.deal);
 }
 
 // ─── Post template builder ───────────────────────────────────────────────────
@@ -106,8 +139,7 @@ export function buildTop5PostContent(
   lines.push('🏆 TOP 5 OFFERTE DEL GIORNO 🏆');
   lines.push('');
 
-  deals.forEach((deal, index) => {
-    const num = index + 1;
+  deals.forEach(deal => {
     const title = deal.product.title;
     const dealPrice = deal.currentPrice ?? deal.price;
     const price = dealPrice != null ? formatPrice(dealPrice) : '–';
@@ -117,16 +149,16 @@ export function buildTop5PostContent(
     const reviews = deal.reviewCount ?? 0;
     const rating = deal.rating != null ? deal.rating.toFixed(1) : '–';
 
-    lines.push(`${num}. 💬 ${title}`);
+    lines.push(`💬 ${title}`);
 
     if (originalPrice && discount) {
-      lines.push(`   💰 ${price}€ invece di ${originalPrice}€ (-${discount}%)`);
+      lines.push(`💰 ${price}€ invece di ${originalPrice}€ (-${discount}%)`);
     } else {
-      lines.push(`   💰 ${price}€`);
+      lines.push(`💰 ${price}€`);
     }
 
-    lines.push(`   ⭐ ${reviews} Recensioni: ${rating} / 5.0`);
-    lines.push(`   🔗 ${link}`);
+    lines.push(`⭐ ${reviews} Recensioni: ${rating} / 5.0`);
+    lines.push(`🔗 ${link}`);
     lines.push('');
   });
 
