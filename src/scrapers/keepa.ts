@@ -21,9 +21,9 @@ async function takeScreenshot(page: Page, label: string): Promise<void> {
     const filename = `${idx}_${safeLabel}.png`;
     const filepath = path.join(SCREENSHOT_DIR, filename);
     await page.screenshot({ path: filepath, fullPage: true });
-    logger.info(`   📸 Screenshot saved: ${filename}`);
+    logger.debug({ filename }, 'Screenshot saved');
   } catch (err) {
-    logger.warn(`   📸 Screenshot failed (${label}): ${(err as Error).message}`);
+    logger.warn({ label, err: (err as Error).message }, 'Screenshot failed');
   }
 }
 
@@ -44,12 +44,16 @@ async function withRetry<T>(
       return await fn();
     } catch (error) {
       if (attempt === retries) {
-        logger.error(`${label} failed after ${retries} attempts: ${(error as Error).message}`);
+        logger.error(
+          { label, retries, err: (error as Error).message },
+          'Operation failed after all retries'
+        );
         throw error;
       }
       const waitMs = baseDelay * Math.pow(2, attempt - 1);
       logger.warn(
-        `${label} attempt ${attempt}/${retries} failed: ${(error as Error).message}. Retrying in ${waitMs / 1000}s...`
+        { label, attempt, retries, err: (error as Error).message, retryInSec: waitMs / 1000 },
+        'Retry attempt failed'
       );
       await delay(waitMs);
     }
@@ -122,10 +126,10 @@ async function clickFilterToggle(
   }, searchText);
 
   if (clicked) {
-    logger.info(`   ✅ ${logLabel}`);
+    logger.debug({ filter: logLabel }, 'Filter toggled');
     await takeScreenshot(page, `filter_toggle_${logLabel}`);
   } else {
-    logger.info(`   ⚠️  Could not find: ${logLabel}`);
+    logger.warn({ filter: logLabel }, 'Filter element not found');
   }
   return clicked;
 }
@@ -144,11 +148,11 @@ async function ensurePanelExpanded(
   }, contentId);
 
   if (!isHidden) {
-    logger.info(`   ✅ "${logLabel}" panel already expanded`);
+    logger.debug({ panel: logLabel }, 'Panel already expanded');
     return;
   }
 
-  logger.info(`   🔽 Expanding "${logLabel}" panel...`);
+  logger.debug({ panel: logLabel }, 'Expanding panel');
   const clicked = await page.evaluate((tId: string) => {
     const toggle = document.getElementById(tId);
     if (!toggle) return false;
@@ -158,7 +162,7 @@ async function ensurePanelExpanded(
   }, toggleId);
 
   if (!clicked) {
-    logger.warn(`   ⚠️  Could not find toggle #${toggleId} for "${logLabel}"`);
+    logger.warn({ toggleId, panel: logLabel }, 'Panel toggle element not found');
     return;
   }
 
@@ -179,10 +183,10 @@ async function ensurePanelExpanded(
   }
 
   if (visible) {
-    logger.info(`   ✅ "${logLabel}" panel expanded successfully`);
+    logger.debug({ panel: logLabel }, 'Panel expanded');
     await takeScreenshot(page, `panel_expanded_${logLabel.replace(/\s+/g, '_')}`);
   } else {
-    logger.warn(`   ⚠️  "${logLabel}" panel may not have expanded (timeout)`);
+    logger.warn({ panel: logLabel }, 'Panel expand timed out');
   }
 }
 
@@ -205,15 +209,15 @@ async function setCheckboxById(
   );
 
   if (result === 'not-found') {
-    logger.info(`   ⚠️  Checkbox #${checkboxId} not found: ${logLabel}`);
+    logger.warn({ checkboxId, label: logLabel }, 'Checkbox not found');
     return false;
   }
   if (result === 'already-correct') {
-    logger.info(`   ✅ ${logLabel} (already ${desired ? 'checked' : 'unchecked'})`);
+    logger.debug({ checkboxId, label: logLabel, desired }, 'Checkbox already in desired state');
     await takeScreenshot(page, `checkbox_${checkboxId}_already`);
     return true;
   }
-  logger.info(`   ✅ ${logLabel} (${desired ? 'checked' : 'unchecked'})`);
+  logger.debug({ checkboxId, label: logLabel, desired }, 'Checkbox toggled');
   await takeScreenshot(page, `checkbox_${checkboxId}_toggled`);
   return true;
 }
@@ -249,7 +253,7 @@ async function detectMissingCategories(page: Page): Promise<void> {
       return results;
     });
 
-    logger.info(`   📋 Found ${pageCategories.length} deal categories on the page`);
+    logger.info({ count: pageCategories.length }, 'Deal categories found on page');
 
     const knownCategoryNames = Object.values(CATEGORY_NAMES).map(n => n.toLowerCase().trim());
     const missingCategories = pageCategories.filter(
@@ -257,14 +261,11 @@ async function detectMissingCategories(page: Page): Promise<void> {
     );
 
     if (missingCategories.length === 0) {
-      logger.info('   ✅ All page categories are already mapped — no missing categories found');
+      logger.info('All page categories already mapped');
       return;
     }
 
-    logger.info(`   ⚠️  Found ${missingCategories.length} missing categories:`);
-    for (const cat of missingCategories) {
-      logger.info(`      - ${cat.name} (${cat.count} deals)`);
-    }
+    logger.warn({ missingCategories }, 'Unmapped categories detected');
 
     let existingData: Record<string, string> = {};
     try {
@@ -292,15 +293,15 @@ async function detectMissingCategories(page: Page): Promise<void> {
     }
 
     if (added === 0) {
-      logger.info('   ℹ️  All missing categories were already recorded in the file');
+      logger.debug('All missing categories already recorded');
       return;
     }
 
     await fs.mkdir(path.dirname(MISSING_CATEGORIES_FILE), { recursive: true });
     await fs.writeFile(MISSING_CATEGORIES_FILE, JSON.stringify(existingData, null, 2), 'utf-8');
-    logger.info(`   💾 Saved ${added} new missing categories to ${MISSING_CATEGORIES_FILE}`);
+    logger.info({ added, file: MISSING_CATEGORIES_FILE }, 'New missing categories saved');
   } catch (error) {
-    logger.error(`   ❌ Error detecting missing categories: ${(error as Error).message}`);
+    logger.error({ err: (error as Error).message }, 'Error detecting missing categories');
   }
 }
 
@@ -318,18 +319,18 @@ interface ReviewData {
 }
 
 async function scrapeAllCategories(page: Page): Promise<KeepaProduct[]> {
-  logger.info('\n🔍 Navigating through selected categories...');
+  logger.info('Navigating through selected categories');
 
   const products: KeepaProduct[] = [];
 
   for (const categoryId of config.keepa.categories) {
     const categoryName = CATEGORY_NAMES[categoryId];
     if (!categoryName) {
-      logger.info(`   ⚠️  Category ID ${categoryId} not found in CATEGORY_NAMES`);
+      logger.warn({ categoryId }, 'Category ID not found in CATEGORY_NAMES');
       continue;
     }
 
-    logger.info(`\n   🎯 Processing: "${categoryName}" (ID: ${categoryId})`);
+    logger.info({ category: categoryName, categoryId }, 'Processing category');
 
     try {
       const clicked = await page.evaluate((targetCategory: string) => {
@@ -347,13 +348,13 @@ async function scrapeAllCategories(page: Page): Promise<KeepaProduct[]> {
       }, categoryName);
 
       if (!clicked) {
-        logger.info(`   ⚠️  Could not find <a> tag for "${categoryName}"`);
+        logger.warn({ category: categoryName }, 'Category link not found');
         continue;
       }
 
-      logger.info(`   ✅ Clicked category link`);
+      logger.debug({ category: categoryName }, 'Category link clicked');
       await takeScreenshot(page, `pass1_cat_${categoryId}_clicked`);
-      logger.info(`   ⏳ Waiting for products to load...`);
+      logger.debug({ category: categoryName }, 'Waiting for products to load');
 
       // Capture the first ASIN currently visible before the category switch
       const previousFirstAsin = await page.evaluate(() => {
@@ -403,12 +404,12 @@ async function scrapeAllCategories(page: Page): Promise<KeepaProduct[]> {
       }
 
       if (!productsReady) {
-        logger.info(`   ⚠️  Timeout waiting for products in "${categoryName}"`);
+        logger.warn({ category: categoryName }, 'Timeout waiting for products');
         await takeScreenshot(page, `pass1_cat_${categoryId}_timeout`);
         continue;
       }
 
-      logger.info(`   ✅ Products loaded`);
+      logger.debug({ category: categoryName }, 'Products loaded');
       await takeScreenshot(page, `pass1_cat_${categoryId}_loaded`);
 
       const productLinks = await page.evaluate(
@@ -517,7 +518,8 @@ async function scrapeAllCategories(page: Page): Promise<KeepaProduct[]> {
 
       const targetCount = config.keepa.maxProductsPerCategory;
       logger.info(
-        `   📦 Found ${normalizedLinks.length} products on page (target: ${targetCount} new/updated)`
+        { found: normalizedLinks.length, target: targetCount, category: categoryName },
+        'Products found on page'
       );
 
       const categoryProducts: KeepaProduct[] = [];
@@ -535,15 +537,16 @@ async function scrapeAllCategories(page: Page): Promise<KeepaProduct[]> {
 
           if (dupCheck.status === 'unchanged') {
             skippedUnchanged++;
-            logger.info(
-              `   ⏩ [${i + 1}/${normalizedLinks.length}] Skipping ${asin} (unchanged in DB)`
+            logger.debug(
+              { asin, index: i + 1, total: normalizedLinks.length },
+              'Skipping unchanged product'
             );
             continue;
           }
 
-          const statusIcon = dupCheck.status === 'new' ? '🆕' : '🔄';
-          logger.info(
-            `   ${statusIcon} [${i + 1}/${normalizedLinks.length}] Processing ${asin} (${dupCheck.status})...`
+          logger.debug(
+            { asin, status: dupCheck.status, index: i + 1, total: normalizedLinks.length },
+            'Processing product'
           );
 
           const clickSuccess = await page.evaluate((targetAsin: string) => {
@@ -559,7 +562,7 @@ async function scrapeAllCategories(page: Page): Promise<KeepaProduct[]> {
           }, asin);
 
           if (!clickSuccess) {
-            logger.info(`   ⚠️  Could not click product link for ${asin}`);
+            logger.warn({ asin }, 'Could not click product link');
             await takeScreenshot(page, `product_${asin}_click_fail`);
             categoryProducts.push({
               asin,
@@ -649,24 +652,28 @@ async function scrapeAllCategories(page: Page): Promise<KeepaProduct[]> {
 
           categoryProducts.push(productData);
 
-          const reviewInfo = productData.rating
-            ? ` | ⭐ ${productData.rating} (${productData.reviewCount} reviews)`
-            : ' | ⭐ no reviews';
-          const priceInfo = productData.avgPrice
-            ? ` | €${productData.currentPrice} (was €${productData.avgPrice}, ${productData.discount}%)`
-            : '';
-          logger.info(`   ✅ ${asin}${priceInfo}${reviewInfo}`);
+          logger.info(
+            {
+              asin,
+              currentPrice: productData.currentPrice,
+              avgPrice: productData.avgPrice,
+              discount: productData.discount,
+              rating: productData.rating,
+              reviewCount: productData.reviewCount,
+            },
+            'Product scraped'
+          );
 
           await page.goBack();
           await delay(1500);
           await page.waitForSelector('#productPage0', { timeout: 10000 }).catch(() => undefined);
         } catch (error) {
-          logger.info(`   ⚠️  Error processing ${asin}: ${(error as Error).message}`);
+          logger.warn({ asin, err: (error as Error).message }, 'Error processing product');
           try {
             await page.goBack();
             await delay(1500);
           } catch {
-            logger.info(`   ⚠️  Could not recover, continuing...`);
+            logger.warn({ asin }, 'Could not recover page state');
           }
         }
       }
@@ -689,12 +696,15 @@ async function scrapeAllCategories(page: Page): Promise<KeepaProduct[]> {
 
       await delay(config.keepa.scrapingDelayMs);
     } catch (error) {
-      logger.info(`   ❌ Error processing "${categoryName}": ${(error as Error).message}`);
+      logger.error(
+        { category: categoryName, err: (error as Error).message },
+        'Category processing failed'
+      );
       continue;
     }
   }
 
-  logger.info(`\n🎉 Total products scraped: ${products.length}`);
+  logger.info({ totalProducts: products.length }, 'All categories scraped');
   return products;
 }
 
@@ -703,18 +713,18 @@ async function scrapeAllCategories(page: Page): Promise<KeepaProduct[]> {
  * and collect only the visible ASINs — no product detail clicks needed.
  */
 async function collectLowestAsins(page: Page): Promise<Set<string>> {
-  logger.info('\n🔍 [Pass 2] Collecting lowest-ever ASINs from each category...');
+  logger.info('Pass 2: collecting lowest-ever ASINs');
 
   const allLowestAsins = new Set<string>();
 
   for (const categoryId of config.keepa.categories) {
     const categoryName = CATEGORY_NAMES[categoryId];
     if (!categoryName) {
-      logger.info(`   ⚠️  Category ID ${categoryId} not found in CATEGORY_NAMES`);
+      logger.warn({ categoryId }, 'Pass 2: category ID not found');
       continue;
     }
 
-    logger.info(`\n   🎯 [Pass 2] Scanning: "${categoryName}" (ID: ${categoryId})`);
+    logger.info({ category: categoryName, categoryId }, 'Pass 2: scanning category');
 
     try {
       const clicked = await page.evaluate((targetCategory: string) => {
@@ -732,7 +742,7 @@ async function collectLowestAsins(page: Page): Promise<Set<string>> {
       }, categoryName);
 
       if (!clicked) {
-        logger.info(`   ⚠️  Could not find <a> tag for "${categoryName}"`);
+        logger.warn({ category: categoryName }, 'Pass 2: category link not found');
         continue;
       }
 
@@ -777,7 +787,7 @@ async function collectLowestAsins(page: Page): Promise<Set<string>> {
       }
 
       if (!ready) {
-        logger.info(`   ⚠️  Timeout waiting for "${categoryName}" — skipping`);
+        logger.warn({ category: categoryName }, 'Pass 2: timeout waiting for category');
         await takeScreenshot(page, `pass2_cat_${categoryId}_timeout`);
         continue;
       }
@@ -812,17 +822,23 @@ async function collectLowestAsins(page: Page): Promise<Set<string>> {
       });
 
       for (const asin of asins) allLowestAsins.add(asin);
-      logger.info(`   ✅ [Pass 2] "${categoryName}": found ${asins.length} lowest-ever ASINs`);
+      logger.info(
+        { category: categoryName, asinCount: asins.length },
+        'Pass 2: lowest ASINs collected'
+      );
       await takeScreenshot(page, `pass2_cat_${categoryId}_asins_collected`);
 
       await delay(config.keepa.scrapingDelayMs);
     } catch (error) {
-      logger.info(`   ❌ [Pass 2] Error processing "${categoryName}": ${(error as Error).message}`);
+      logger.error(
+        { category: categoryName, err: (error as Error).message },
+        'Pass 2: category processing failed'
+      );
       continue;
     }
   }
 
-  logger.info(`\n🎉 [Pass 2] Total lowest-ever ASINs collected: ${allLowestAsins.size}`);
+  logger.info({ totalLowestAsins: allLowestAsins.size }, 'Pass 2 complete');
   return allLowestAsins;
 }
 
@@ -851,7 +867,7 @@ export async function getLatestScreenshots(count = 4): Promise<string[]> {
 }
 
 export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
-  logger.info('🚀 Starting Keepa scraper (puppeteer-real-browser)...');
+  logger.info('Starting Keepa scraper');
 
   let browser: Browser | undefined;
   let page: Page | undefined;
@@ -878,16 +894,16 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
 
     browser = realBrowser;
     page = realPage;
-    logger.info('✅ Browser launched with puppeteer-real-browser');
+    logger.info('Browser launched with puppeteer-real-browser');
     screenshotCounter = 0;
 
     // Clear screenshot directory for a fresh run
     try {
       await fs.rm(SCREENSHOT_DIR, { recursive: true, force: true });
       await fs.mkdir(SCREENSHOT_DIR, { recursive: true });
-      logger.info('📂 Screenshot directory cleared for new run');
+      logger.debug('Screenshot directory cleared');
     } catch (err) {
-      logger.warn(`📂 Could not clear screenshot directory: ${(err as Error).message}`);
+      logger.warn({ err: (err as Error).message }, 'Could not clear screenshot directory');
     }
 
     await page.setViewport({ width: 1280, height: 800 });
@@ -895,16 +911,16 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     );
 
-    logger.info('\n🛒 Navigating to Keepa homepage...');
+    logger.info('Navigating to Keepa homepage');
     try {
       await withRetry(
         () => page!.goto('https://keepa.com/', { waitUntil: 'networkidle2', timeout: 30000 }),
         { retries: 3, baseDelay: 3000, label: 'Keepa homepage navigation' }
       );
-      logger.info('   ✅ Keepa homepage loaded');
+      logger.info('Keepa homepage loaded');
       await takeScreenshot(page, 'homepage_loaded');
     } catch (error) {
-      logger.warn(`   ⚠️  Navigation error: ${(error as Error).message}`);
+      logger.warn({ err: (error as Error).message }, 'Navigation error');
     }
 
     await delay(2000);
@@ -921,7 +937,7 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       });
 
       if (domainSelected) {
-        logger.info('   ✅ Domain selector clicked');
+        logger.debug('Domain selector clicked');
         await delay(1000);
 
         const italySelected = await page.evaluate(() => {
@@ -944,20 +960,20 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
         });
 
         if (italySelected) {
-          logger.info('   ✅ Amazon.it selected!');
+          logger.info('Amazon.it selected');
           await delay(2000);
           await takeScreenshot(page, 'domain_it_selected');
         } else {
-          logger.info('   ⚠️  Could not find Italy option, proceeding anyway...');
+          logger.warn('Italy domain option not found, proceeding');
         }
       } else {
-        logger.info('   ⚠️  Could not find domain selector, proceeding anyway...');
+        logger.warn('Domain selector not found, proceeding');
       }
     } catch (error) {
-      logger.info(`   ⚠️  Error selecting domain: ${(error as Error).message}`);
+      logger.warn({ err: (error as Error).message }, 'Error selecting domain');
     }
 
-    logger.info('\n🛒 Navigating to Deals page...');
+    logger.info('Navigating to Deals page');
     try {
       await withRetry(
         () =>
@@ -966,10 +982,10 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       );
       await page.mouse.move(423, 354);
       await page.mouse.move(320, 530);
-      logger.info('   ✅ Deals page loaded successfully');
+      logger.info('Deals page loaded');
       await takeScreenshot(page, 'deals_page_loaded');
     } catch (error) {
-      logger.warn(`   ⚠️  Navigation timeout: ${(error as Error).message}`);
+      logger.warn({ err: (error as Error).message }, 'Deals page navigation timeout');
     }
 
     await delay(5000);
@@ -990,8 +1006,7 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
     logger.info(`   Domain text: "${domainCheck.text}"`);
 
     if (!domainCheck.text.includes('.it')) {
-      logger.info('   ⚠️  WARNING: Domain is NOT set to .it!');
-      logger.info('   🔄 Attempting manual fix...');
+      logger.warn({ domain: domainCheck.text }, 'Domain NOT set to .it — attempting fix');
       await page.click('.languageMenuImg[rel="domain"]').catch(() => {});
       await delay(1500);
       await page.evaluate(() => {
@@ -1004,9 +1019,9 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
         const el = document.querySelector('.languageMenuImg[rel="domain"]');
         return el ? (el.textContent ?? '') : '';
       });
-      logger.info(`   After fix, domain: "${newDomain}"`);
+      logger.info({ domain: newDomain }, 'Domain after fix');
     } else {
-      logger.info('   ✅ Domain correctly set to Amazon.it');
+      logger.info('Domain correctly set to Amazon.it');
     }
     await takeScreenshot(page, 'domain_verification');
 
@@ -1022,7 +1037,7 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       });
 
       if (italianSelected) {
-        logger.info('   ✅ Italian language selected!');
+        logger.info('Italian language selected');
         await delay(4000);
       } else {
         const italianSelectedAlt = await page.evaluate(() => {
@@ -1035,17 +1050,17 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
         });
 
         if (italianSelectedAlt) {
-          logger.info('   ✅ Italian language selected (alternative method)!');
+          logger.info('Italian language selected (alternative method)');
           await delay(4000);
         } else {
-          logger.info('   ⚠️  Could not find Italian language option, proceeding anyway...');
+          logger.warn('Italian language option not found, proceeding');
         }
       }
     } catch (error) {
-      logger.info(`   ⚠️  Error selecting language: ${(error as Error).message}`);
+      logger.warn({ err: (error as Error).message }, 'Error selecting language');
     }
 
-    logger.info('\n🛡️  Checking for Cloudflare challenge...');
+    logger.info('Checking for Cloudflare challenge');
     const hasCloudflare = await page.evaluate(() => {
       return (
         document.body.innerText.includes('Cloudflare') ||
@@ -1055,11 +1070,11 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
     });
 
     if (hasCloudflare) {
-      logger.info('⚠️  Cloudflare challenge detected - waiting 90 seconds for completion...');
+      logger.warn('Cloudflare challenge detected — waiting 90s');
       await takeScreenshot(page, 'cloudflare_detected');
     }
 
-    logger.info('\n📦 Selecting "Amazon" price type filter...');
+    logger.info('Selecting "Amazon" price type filter');
     try {
       const filterClicked = await page.evaluate(() => {
         const container = document.getElementById('dealPriceTypesFilter');
@@ -1074,17 +1089,17 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       });
 
       if (filterClicked) {
-        logger.info('   ✅ "Amazon" filter selected (data-type=0)!');
+        logger.debug('Amazon price filter selected');
         await delay(2000);
         await takeScreenshot(page, 'amazon_price_filter_selected');
       } else {
-        logger.info('   ⚠️  Could not find "Amazon" filter (data-type=0) in dealPriceTypesFilter');
+        logger.warn('Amazon price filter not found');
       }
     } catch (error) {
-      logger.info(`   ⚠️  Error selecting price type: ${(error as Error).message}`);
+      logger.warn({ err: (error as Error).message }, 'Error selecting price type filter');
     }
 
-    logger.info('\n📅 Setting time interval to 3 months...');
+    logger.info('Setting time interval to 3 months');
     try {
       const dateRangeSet = await page.evaluate(() => {
         // Strategy 1: find dealDateRange container with setting attribute
@@ -1114,16 +1129,16 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       });
 
       if (dateRangeSet) {
-        logger.info(`   ✅ Time interval set to 3 months (via ${dateRangeSet})`);
+        logger.debug({ method: dateRangeSet }, 'Time interval set to 3 months');
         await delay(1000);
       } else {
-        logger.info('   ⚠️  Could not set date range to 3 months');
+        logger.warn('Could not set date range to 3 months');
       }
     } catch (error) {
-      logger.info(`   ⚠️  Error setting date range: ${(error as Error).message}`);
+      logger.warn({ err: (error as Error).message }, 'Error setting date range');
     }
 
-    logger.info('\n📊 Configuring range filters...');
+    logger.info('Configuring range filters');
     try {
       await ensurePanelExpanded(
         page,
@@ -1141,10 +1156,10 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       );
       await delay(500);
     } catch (error) {
-      logger.info(`   ⚠️  Error in range config: ${(error as Error).message}`);
+      logger.warn({ err: (error as Error).message }, 'Error in range config');
     }
 
-    logger.info('\n🔍 Expanding "Applica filtri" panel...');
+    logger.info('Expanding Applica filtri panel');
     try {
       await ensurePanelExpanded(
         page,
@@ -1154,10 +1169,10 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       );
       await delay(500);
     } catch (error) {
-      logger.info(`   ⚠️  Error expanding Applica filtri panel: ${(error as Error).message}`);
+      logger.warn({ err: (error as Error).message }, 'Error expanding Applica filtri panel');
     }
 
-    logger.info('\n🔍 Configuring deal filters (Pass 1: without Minimo)...');
+    logger.info('Configuring deal filters (Pass 1: without Minimo)');
     try {
       await setCheckboxById(page, 'checkboxLowestEver', false, '"Minimo" unchecked for Pass 1');
       await delay(300);
@@ -1173,13 +1188,13 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       );
       await delay(500);
     } catch (error) {
-      logger.info(`   ⚠️  Error applying filters: ${(error as Error).message}`);
+      logger.warn({ err: (error as Error).message }, 'Error applying filters');
     }
 
-    logger.info('\n🔘 Looking for "Find Deals!" button...');
+    logger.info('Looking for Find Deals button');
     try {
       await page.waitForSelector('#submitDealQuery', { timeout: 5000 });
-      logger.info('   ✅ Found "Find Deals!" button');
+      logger.debug('Find Deals button found');
 
       await page.evaluate(() => {
         const button = document.querySelector('#submitDealQuery');
@@ -1188,8 +1203,7 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
         }
       });
 
-      logger.info('   ⏳ Waiting for products container to appear...');
-      logger.info('   ⏰ Max wait time: 60 seconds');
+      logger.debug('Waiting for products container');
 
       let productPageReady = false;
       const maxWaitTime = 60000;
@@ -1198,7 +1212,7 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
 
       while (!productPageReady && Date.now() - startTime < maxWaitTime) {
         const elapsed = Math.round((Date.now() - startTime) / 1000);
-        logger.info(`   ⏱️  Checking... (${elapsed}s elapsed)`);
+        logger.debug({ elapsedSec: elapsed }, 'Polling for products');
 
         productPageReady = await page.evaluate(() => {
           const productPage = document.querySelector('#productPage0');
@@ -1218,10 +1232,10 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       }
 
       if (productPageReady) {
-        logger.info('   ✅ Products container is ready!');
+        logger.info('Products container ready');
         await takeScreenshot(page, 'find_deals_results_ready');
       } else {
-        logger.info('   ⚠️  Timeout waiting for products. Proceeding anyway...');
+        logger.warn('Timeout waiting for products container');
         await takeScreenshot(page, 'find_deals_results_timeout');
       }
     } catch (error) {
@@ -1231,17 +1245,17 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       );
     }
 
-    logger.info('\n⏭️  Skipping general page extraction - navigating directly to categories...');
+    logger.debug('Skipping general page extraction — navigating to categories');
 
-    logger.info('\n🔎 Checking for missing categories on the page...');
+    logger.info('Checking for missing categories');
     await detectMissingCategories(page);
 
     // ── Pass 1: Normal scraping (Minimo OFF) ───────────────────────────────
-    logger.info('\n═══ PASS 1: Normal deal scraping (Minimo OFF) ═══');
+    logger.info('Pass 1: normal deal scraping (Minimo OFF)');
     const pass1Products = await scrapeAllCategories(page);
 
     // ── Pass 2: Enable "minimo" filter, collect ASINs only ───────────────
-    logger.info('\n═══ PASS 2: Collecting lowest-ever ASINs (Minimo ON) ═══');
+    logger.info('Pass 2: collecting lowest-ever ASINs (Minimo ON)');
     let lowestAsins = new Set<string>();
     try {
       // Ensure the "Applica filtri" panel is still expanded before Pass 2
@@ -1256,7 +1270,7 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       await setCheckboxById(page, 'checkboxLowestEver', true, '"Minimo" enabled for Pass 2');
       await delay(500);
 
-      logger.info('\n🔘 Clicking "Find Deals!" for pass 2...');
+      logger.info('Clicking Find Deals for pass 2');
       await page.evaluate(() => {
         const button = document.querySelector('#submitDealQuery');
         if (button) (button as HTMLElement).click();
@@ -1282,10 +1296,10 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       }
 
       if (passReady) {
-        logger.info('   ✅ Pass 2 results loaded');
+        logger.info('Pass 2 results loaded');
         await takeScreenshot(page, 'pass2_find_deals_ready');
       } else {
-        logger.info('   ⚠️  Timeout waiting for pass 2 results, proceeding anyway...');
+        logger.warn('Timeout waiting for pass 2 results');
         await takeScreenshot(page, 'pass2_find_deals_timeout');
       }
 
@@ -1293,7 +1307,7 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
 
       lowestAsins = await collectLowestAsins(page);
     } catch (error) {
-      logger.warn(`   ⚠️  Error in pass 2: ${(error as Error).message}`);
+      logger.warn({ err: (error as Error).message }, 'Error in pass 2');
     }
 
     // ── Merge: flag pass 1 products that appear in the "Minimo" results ──
@@ -1312,7 +1326,7 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
 
     const keepOpenMs = parseInt(process.env.BROWSER_KEEP_OPEN_MS ?? '3000', 10);
     if (keepOpenMs > 0) {
-      logger.info(`\n⏳ Keeping browser open for ${keepOpenMs / 1000} seconds...`);
+      logger.debug({ keepOpenMs }, 'Keeping browser open before close');
       await delay(keepOpenMs);
     }
 

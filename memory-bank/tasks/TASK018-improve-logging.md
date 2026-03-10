@@ -1,6 +1,6 @@
 # [TASK018] - Improve Logging (Request ID, IP Tracking, Structured Context)
 
-**Status:** Pending
+**Status:** Completed
 **Added:** 2026-03-10
 **Updated:** 2026-03-10
 **Priority:** MEDIUM
@@ -56,21 +56,28 @@ Audit finding: the current logging setup lacks several best practices for produc
 
 ## Progress Tracking
 
-**Overall Status:** Not Started - 0%
+**Overall Status:** Completed - 100%
 
 ### Subtasks
 
-| ID   | Description                                  | Status      | Updated | Notes |
-| ---- | -------------------------------------------- | ----------- | ------- | ----- |
-| 18.1 | Create request-id middleware                 | Not Started |         |       |
-| 18.2 | Add IP to request logger                     | Not Started |         |       |
-| 18.3 | Add body logging for mutations               | Not Started |         |       |
-| 18.4 | Suppress /health log noise                   | Not Started |         |       |
-| 18.5 | Refactor Keepa scraper to structured logging | Not Started |         |       |
-| 18.6 | Propagate requestId through child loggers    | Not Started |         |       |
+| ID   | Description                                  | Status   | Updated    | Notes                                          |
+| ---- | -------------------------------------------- | -------- | ---------- | ---------------------------------------------- |
+| 18.1 | Create request-id middleware                 | Complete | 2026-03-10 | crypto.randomUUID, X-Request-Id header         |
+| 18.2 | Add IP to request logger                     | Complete | 2026-03-10 | req.ip with socket.remoteAddress fallback      |
+| 18.3 | Add body logging for mutations               | Complete | 2026-03-10 | POST/PUT/PATCH/DELETE; sensitive keys redacted |
+| 18.4 | Suppress /health log noise                   | Complete | 2026-03-10 | Early return skips /health from request logger |
+| 18.5 | Refactor Keepa scraper to structured logging | Complete | 2026-03-10 | ~75 emoji-based logs converted to pino objects |
+| 18.6 | Propagate requestId through child loggers    | Complete | 2026-03-10 | requestId in request-logger + error-handler    |
 
 ## Progress Log
 
 ### 2026-03-10
 
 - Task created from comprehensive codebase audit
+- Created `src/middleware/request-id.ts`: generates UUID per request, reads existing X-Request-Id, sets on req.id and response header
+- Added Express global augmentation for `req.id`
+- Updated `request-logger.ts`: added IP (`req.ip`), requestId, sanitized body logging for mutations, skip /health route
+- Updated `error-handler.ts`: includes `requestId` in error log objects
+- Wired `requestId` middleware in `server.ts` (before requestLogger)
+- Converted ~75 emoji-heavy string-interpolation logs in `keepa.ts` to structured pino objects: helper functions, scrapeAllCategories, collectLowestAsins, scrapeKeepaDeals
+- All 54 tests pass, 0 TypeScript errors

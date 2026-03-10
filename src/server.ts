@@ -4,6 +4,7 @@ import { config } from './config/index.js';
 import { authMiddleware } from './middleware/auth.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { rateLimiter } from './middleware/rate-limiter.js';
+import { requestId } from './middleware/request-id.js';
 import { requestLogger } from './middleware/request-logger.js';
 import { dealsRouter } from './routes/deals.routes.js';
 import { productsRouter } from './routes/products.routes.js';
@@ -36,6 +37,7 @@ app.use((_req, res, next) => {
   next();
 });
 app.use(rateLimiter);
+app.use(requestId);
 app.use(requestLogger);
 
 // ─── Health check alert throttling ────────────────────────────────────────────

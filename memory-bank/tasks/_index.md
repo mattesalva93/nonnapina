@@ -6,9 +6,7 @@
 
 ## Pending
 
-- [TASK016] Optimize DB queries (N+1 in saveProducts/markDealsAsLowest) — MEDIUM
 - [TASK017] Remove dead code and legacy artifacts — LOW
-- [TASK018] Improve logging (request ID, IP, structured scraper logs) — MEDIUM
 - [TASK019] Fix package placement and TypeScript config — LOW
 - [TASK020] Docker improvements (entrypoint, resource limits, security) — MEDIUM
 - [TASK021] Increase test coverage — MEDIUM
@@ -33,6 +31,8 @@
 - [TASK013] DRY refactor: extract shared channel dispatch and scoring — Completed on 2026-03-11
 - [TASK015] Add graceful shutdown handlers — Completed on 2026-03-11
 - [TASK022] Health check email flood prevention — Completed on 2026-03-10
+- [TASK016] Optimize DB queries (N+1) — Completed on 2026-03-10
+- [TASK018] Improve logging (request ID, IP, structured) — Completed on 2026-03-10
 
 ## Abandoned
 

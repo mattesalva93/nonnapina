@@ -1,6 +1,6 @@
 # [TASK016] - Optimize Database Queries (N+1 in saveProducts and markDealsAsLowest)
 
-**Status:** Pending
+**Status:** Completed
 **Added:** 2026-03-10
 **Updated:** 2026-03-10
 **Priority:** MEDIUM
@@ -53,20 +53,24 @@ A single scrape run executes **~650+ individual queries** that could be reduced 
 
 ## Progress Tracking
 
-**Overall Status:** Not Started - 0%
+**Overall Status:** Completed - 100%
 
 ### Subtasks
 
-| ID   | Description                              | Status      | Updated | Notes |
-| ---- | ---------------------------------------- | ----------- | ------- | ----- |
-| 16.1 | Refactor markDealsAsLowest to updateMany | Not Started |         |       |
-| 16.2 | Pre-fetch existing deals in saveProducts | Not Started |         |       |
-| 16.3 | Wrap saveProducts in transaction         | Not Started |         |       |
-| 16.4 | Benchmark query count improvement        | Not Started |         |       |
-| 16.5 | Verify tests pass                        | Not Started |         |       |
+| ID   | Description                              | Status   | Updated    | Notes                                          |
+| ---- | ---------------------------------------- | -------- | ---------- | ---------------------------------------------- |
+| 16.1 | Refactor markDealsAsLowest to updateMany | Complete | 2026-03-10 | Single updateMany replaces N×2 queries         |
+| 16.2 | Pre-fetch existing deals in saveProducts | Complete | 2026-03-10 | findMany + distinct replaces N findFirst calls |
+| 16.3 | Wrap saveProducts in transaction         | Complete | 2026-03-10 | prisma.$transaction(async tx => {...})         |
+| 16.4 | Benchmark query count improvement        | Complete | 2026-03-10 | ~650 → ~150 queries for 145-product run        |
+| 16.5 | Verify tests pass                        | Complete | 2026-03-10 | 54/54 tests pass, 0 tsc errors                 |
 
 ## Progress Log
 
 ### 2026-03-10
 
 - Task created from comprehensive codebase audit
+- Refactored `markDealsAsLowest()`: replaced N×2 (findFirst+update) loop with single `prisma.deal.updateMany({ where: { asin: { in: asins }, isLowest: false } })`
+- Refactored `saveProducts()`: added pre-fetch of all existing deals via `prisma.deal.findMany({ where: { asin: { in: ... } }, distinct: ['asin'] })` and Map lookup
+- Wrapped `saveProducts()` in `prisma.$transaction()` for atomicity and reduced round trips
+- All 54 tests pass, 0 TypeScript errors

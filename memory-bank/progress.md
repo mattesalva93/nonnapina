@@ -52,7 +52,7 @@
 - Zod config schema defined but never used — **FIXED** via configSchema.parse() at startup (TASK014 ✅)
 - Massive DRY violation across publish services — **FIXED** via shared channel dispatch + scoring modules (TASK013 ✅)
 - No graceful shutdown handlers — **FIXED** via SIGTERM/SIGINT + 5-step cleanup (TASK015 ✅)
-- N+1 query patterns in saveProducts() and markDealsAsLowest() — see TASK016
+- N+1 query patterns in saveProducts() and markDealsAsLowest() — **FIXED** via pre-fetch + updateMany + transaction (TASK016 ✅)
 - Low test coverage: only 4 test files, no route/integration tests — see TASK021
 
 ## Codebase Audit (2026-03-10)

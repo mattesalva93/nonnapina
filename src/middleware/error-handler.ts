@@ -6,6 +6,7 @@ import { logger } from '../utils/logger.js';
 export function errorHandler(err: Error, req: Request, res: Response, _next: NextFunction): void {
   logger.error(
     {
+      requestId: req.id,
       err: err.message,
       stack: err.stack,
       method: req.method,
