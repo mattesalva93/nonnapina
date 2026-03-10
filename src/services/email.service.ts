@@ -9,7 +9,7 @@ export interface ErrorAlertPayload {
   errorMessage: string;
   errorStack?: string;
   component: string;
-  severity: 'critical' | 'error' | 'warning';
+  severity: 'critical' | 'error' | 'warning' | 'info';
   scrapeRunId?: string;
   endpoint?: string;
   httpMethod?: string;
@@ -114,6 +114,8 @@ function severityColor(severity: ErrorAlertPayload['severity']): string {
       return '#e74c3c';
     case 'warning':
       return '#e67e22';
+    case 'info':
+      return '#2980b9';
   }
 }
 

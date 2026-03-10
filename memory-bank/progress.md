@@ -48,8 +48,8 @@
 - No CI/CD pipeline
 - 9 npm vulnerabilities from prisma transitive deps — **FIXED** via overrides (TASK011 ✅)
 - No API authentication — **FIXED** via Bearer token middleware (TASK012 ✅)
-- Health check sends email on every 503 (floods inbox during DB outages) — see TASK022
-- Zod config schema defined but never used for runtime validation — see TASK014
+- Health check sends email on every 503 — **FIXED** via 15-min cooldown + recovery email (TASK022 ✅)
+- Zod config schema defined but never used — **FIXED** via configSchema.parse() at startup (TASK014 ✅)
 - Massive DRY violation across publish.service, lowest-deal.service, top5.service — see TASK013
 - N+1 query patterns in saveProducts() and markDealsAsLowest() — see TASK016
 - No graceful shutdown handlers — see TASK015

@@ -1,6 +1,6 @@
 # [TASK014] - Fix Zod Config Validation (Schema is Dead Code)
 
-**Status:** Pending
+**Status:** Completed
 **Added:** 2026-03-10
 **Updated:** 2026-03-10
 **Priority:** HIGH
@@ -54,20 +54,28 @@ export const config: AppConfig = configSchema.parse(rawConfig);  // ← Runtime 
 
 ## Progress Tracking
 
-**Overall Status:** Not Started - 0%
+**Overall Status:** Completed - 100%
 
 ### Subtasks
 
-| ID   | Description                                    | Status      | Updated | Notes |
-| ---- | ---------------------------------------------- | ----------- | ------- | ----- |
-| 14.1 | Parse config through zod schema                | Not Started |         |       |
-| 14.2 | Remove standalone validateConfig()             | Not Started |         |       |
-| 14.3 | Make database.url required                     | Not Started |         |       |
-| 14.4 | Update server.ts to remove validateConfig call | Not Started |         |       |
-| 14.5 | Update tests                                   | Not Started |         |       |
+| ID   | Description                                    | Status   | Updated    | Notes                                                                       |
+| ---- | ---------------------------------------------- | -------- | ---------- | --------------------------------------------------------------------------- |
+| 14.1 | Parse config through zod schema                | Complete | 2026-03-10 | configSchema.parse(rawConfig) at module load                                |
+| 14.2 | Remove standalone validateConfig()             | Complete | 2026-03-10 | Function deleted, no longer exported                                        |
+| 14.3 | Make database.url required                     | Complete | 2026-03-10 | Required in prod/dev, optional in test via testConfigSchema                 |
+| 14.4 | Update server.ts to remove validateConfig call | Complete | 2026-03-10 | Import and call removed                                                     |
+| 14.5 | Update tests                                   | Complete | 2026-03-10 | 7 tests: valid parse, defaults, env reading, prod failures, test relaxation |
 
 ## Progress Log
 
 ### 2026-03-10
 
 - Task created from comprehensive codebase audit
+- Replaced `export const config = rawConfig` with `configSchema.parse(rawConfig)` via `parseConfig()`
+- Created `testConfigSchema` that relaxes `database.url` and `amazon.*` requirements for test env
+- Removed `validateConfig()` function entirely
+- Removed `validateConfig` import and call from server.ts
+- Rewrote 7 config tests: valid parse, defaults, env var reading, prod validation failures, test relaxation
+- Added `'info'` to `ErrorAlertPayload.severity` union (needed for health recovery email)
+- Added `'info'` case to `severityColor()` switch (blue #2980b9)
+- 54/54 tests pass, 0 tsc errors

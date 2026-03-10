@@ -1,6 +1,6 @@
 import express from 'express';
 import cron from 'node-cron';
-import { config, validateConfig } from './config/index.js';
+import { config } from './config/index.js';
 import { authMiddleware } from './middleware/auth.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { rateLimiter } from './middleware/rate-limiter.js';
@@ -18,10 +18,6 @@ import { localISOString } from './utils/date.js';
 import { createComponentLogger } from './utils/logger.js';
 
 const logger = createComponentLogger('Server');
-
-if (config.server.nodeEnv !== 'test') {
-  validateConfig();
-}
 
 const app = express();
 
@@ -42,24 +38,50 @@ app.use((_req, res, next) => {
 app.use(rateLimiter);
 app.use(requestLogger);
 
+// ─── Health check alert throttling ────────────────────────────────────────────
+const HEALTH_ALERT_COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes
+let lastHealthAlertAt = 0;
+let wasUnhealthy = false;
+
 // ─── Routes ──────────────────────────────────────────────────────────────────
 app.get('/health', async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
     logger.debug('Health check passed');
+
+    if (wasUnhealthy) {
+      wasUnhealthy = false;
+      logger.info('Database recovered — health check passing again');
+      void sendErrorAlert({
+        errorMessage: 'Database connectivity restored',
+        component: 'HealthCheck',
+        severity: 'info',
+        endpoint: '/health',
+        httpMethod: 'GET',
+        httpStatus: 200,
+      });
+    }
+
     res.json({ status: 'ok', timestamp: localISOString(), db: 'connected' });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error({ err: message }, 'Health check failed — database unreachable');
-    void sendErrorAlert({
-      errorMessage: `Health check failed: ${message}`,
-      errorStack: err instanceof Error ? err.stack : undefined,
-      component: 'HealthCheck',
-      severity: 'critical',
-      endpoint: '/health',
-      httpMethod: 'GET',
-      httpStatus: 503,
-    });
+
+    wasUnhealthy = true;
+    const now = Date.now();
+    if (now - lastHealthAlertAt >= HEALTH_ALERT_COOLDOWN_MS) {
+      lastHealthAlertAt = now;
+      void sendErrorAlert({
+        errorMessage: `Health check failed: ${message}`,
+        errorStack: err instanceof Error ? err.stack : undefined,
+        component: 'HealthCheck',
+        severity: 'critical',
+        endpoint: '/health',
+        httpMethod: 'GET',
+        httpStatus: 503,
+      });
+    }
+
     res.status(503).json({ status: 'error', db: 'disconnected' });
   }
 });
