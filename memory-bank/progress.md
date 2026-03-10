@@ -46,6 +46,35 @@
 
 - WhatsApp client Chromium profile lock (non-critical, pre-existing)
 - No CI/CD pipeline
+- 9 npm vulnerabilities from prisma transitive deps — **FIXED** via overrides (TASK011 ✅)
+- No API authentication — **FIXED** via Bearer token middleware (TASK012 ✅)
+- Health check sends email on every 503 (floods inbox during DB outages) — see TASK022
+- Zod config schema defined but never used for runtime validation — see TASK014
+- Massive DRY violation across publish.service, lowest-deal.service, top5.service — see TASK013
+- N+1 query patterns in saveProducts() and markDealsAsLowest() — see TASK016
+- No graceful shutdown handlers — see TASK015
+- Low test coverage: only 4 test files, no route/integration tests — see TASK021
+
+## Codebase Audit (2026-03-10)
+
+Full audit completed. 14 tasks created (TASK011–TASK024):
+
+| Task    | Title                                         | Priority | Category        |
+| ------- | --------------------------------------------- | -------- | --------------- |
+| TASK011 | Fix dependency vulnerabilities                | CRITICAL | Security        |
+| TASK012 | Add API authentication middleware             | CRITICAL | Security        |
+| TASK013 | DRY refactor: shared channel dispatch/scoring | HIGH     | Code Quality    |
+| TASK014 | Fix zod config validation                     | HIGH     | Code Quality    |
+| TASK015 | Add graceful shutdown handlers                | HIGH     | Reliability     |
+| TASK016 | Optimize DB queries (N+1)                     | MEDIUM   | Optimization    |
+| TASK017 | Remove dead code and legacy artifacts         | LOW      | Code Quality    |
+| TASK018 | Improve logging (request ID, IP, structured)  | MEDIUM   | Observability   |
+| TASK019 | Fix package placement and TypeScript config   | LOW      | Build/Config    |
+| TASK020 | Docker improvements (entrypoint, limits, sec) | MEDIUM   | Infrastructure  |
+| TASK021 | Increase test coverage                        | MEDIUM   | Testing         |
+| TASK022 | Health check email flood prevention           | HIGH     | Bug/Reliability |
+| TASK023 | Centralize DATABASE_URL usage via config      | LOW      | Code Quality    |
+| TASK024 | Refactor AmazonService class to functions     | LOW      | Code Quality    |
 
 ## Post-v1.0.0 Enhancements
 

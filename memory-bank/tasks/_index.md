@@ -6,7 +6,18 @@
 
 ## Pending
 
-(none)
+- [TASK013] DRY refactor: extract shared channel dispatch and scoring — HIGH
+- [TASK014] Fix zod config validation (schema is dead code) — HIGH
+- [TASK015] Add graceful shutdown handlers — HIGH
+- [TASK016] Optimize DB queries (N+1 in saveProducts/markDealsAsLowest) — MEDIUM
+- [TASK017] Remove dead code and legacy artifacts — LOW
+- [TASK018] Improve logging (request ID, IP, structured scraper logs) — MEDIUM
+- [TASK019] Fix package placement and TypeScript config — LOW
+- [TASK020] Docker improvements (entrypoint, resource limits, security) — MEDIUM
+- [TASK021] Increase test coverage — MEDIUM
+- [TASK022] Health check email flood prevention — HIGH
+- [TASK023] Centralize DATABASE_URL usage via config module — LOW
+- [TASK024] Refactor AmazonService class to functions — LOW
 
 ## Completed
 
@@ -20,6 +31,8 @@
 - [TASK008] Create "minimo storico" alternative posts service — Completed on 2026-03-09
 - [TASK009] Fix WhatsApp session persistence in Docker — Completed on 2026-03-09
 - [TASK010] Email daily schedule notification — Completed on 2026-03-09
+- [TASK011] Fix dependency vulnerabilities — Completed on 2026-03-10
+- [TASK012] Add API authentication middleware — Completed on 2026-03-10
 
 ## Abandoned
 

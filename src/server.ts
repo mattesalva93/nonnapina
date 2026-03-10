@@ -2,6 +2,7 @@ import express from 'express';
 import cron from 'node-cron';
 import { config, validateConfig } from './config/index.js';
 import { errorHandler } from './middleware/error-handler.js';
+import { authMiddleware } from './middleware/auth.js';
 import { rateLimiter } from './middleware/rate-limiter.js';
 import { requestLogger } from './middleware/request-logger.js';
 import { dealsRouter } from './routes/deals.routes.js';
@@ -63,11 +64,11 @@ app.get('/health', async (_req, res) => {
   }
 });
 
-app.use('/api/scrape', scrapeRouter);
-app.use('/api/products', productsRouter);
-app.use('/api/deals', dealsRouter);
-app.use('/api/publish', publishRouter);
-app.use('/api/whatsapp', whatsappRouter);
+app.use('/api/scrape', authMiddleware, scrapeRouter);
+app.use('/api/products', authMiddleware, productsRouter);
+app.use('/api/deals', authMiddleware, dealsRouter);
+app.use('/api/publish', authMiddleware, publishRouter);
+app.use('/api/whatsapp', authMiddleware, whatsappRouter);
 
 // 404 handler
 app.use((_req, res) => {

@@ -6,6 +6,7 @@ const configSchema = z.object({
     port: z.number().int().positive().default(3000),
     nodeEnv: z.enum(['development', 'production', 'test']).default('development'),
     cronSchedule: z.string().default('15 8,20 * * *'),
+    apiSecret: z.string().default(''),
   }),
   database: z.object({
     url: z.string().default(''),
@@ -49,6 +50,7 @@ const rawConfig = {
     port: parseInt(process.env.PORT ?? '3000'),
     nodeEnv: (process.env.NODE_ENV ?? 'development') as 'development' | 'production' | 'test',
     cronSchedule: process.env.SCRAPE_CRON ?? '15 8,20 * * *',
+    apiSecret: process.env.API_SECRET ?? '',
   },
   database: {
     url: process.env.DATABASE_URL ?? '',
