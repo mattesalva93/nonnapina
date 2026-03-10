@@ -16,7 +16,7 @@ const MIN_POSTS_PER_HOUR = 2;
 const MAX_POSTS_PER_HOUR = 4;
 
 // Probability of picking the "minimo storico" variant over the regular post
-const LOWEST_DEAL_PROBABILITY = 0.15;
+const LOWEST_DEAL_PROBABILITY = 0.2; // 20%
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let dailySchedule: Set<string> = new Set();

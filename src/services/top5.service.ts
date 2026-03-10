@@ -1,7 +1,7 @@
 import { config } from '../config/index.js';
 import { formatPrice } from '../utils/format.js';
 import { createComponentLogger } from '../utils/logger.js';
-import { dispatchToBufferChannels } from './channels/channel.registry.js';
+import { areAllChannelsReady, dispatchToBufferChannels } from './channels/channel.registry.js';
 import type { BufferChannelDef, ChannelResult } from './channels/channel.types.js';
 import { publishBufferToTelegram } from './channels/telegram.channel.js';
 import { publishBufferToWhatsApp } from './channels/whatsapp.channel.js';
@@ -154,6 +154,12 @@ export interface Top5PublishResult {
 }
 
 export async function runTop5PublishCycle(): Promise<Top5PublishResult | undefined> {
+  const channelCheck = areAllChannelsReady();
+  if (!channelCheck.ready) {
+    logger.warn({ reason: channelCheck.reason }, 'Channels not ready — skipping top 5 cycle');
+    return undefined;
+  }
+
   const deals = await selectTop5Deals();
   if (deals.length === 0) {
     logger.info('No eligible deals found for top 5 — skipping');

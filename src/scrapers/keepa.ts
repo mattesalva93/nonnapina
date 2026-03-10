@@ -22,7 +22,7 @@ async function takeScreenshot(page: Page, label: string): Promise<void> {
     const safeLabel = label.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
     const filename = `${idx}_${safeLabel}.png`;
     const filepath = path.join(SCREENSHOT_DIR, filename);
-    await page.screenshot({ path: filepath, fullPage: true });
+    await page.screenshot({ path: filepath });
     logger.debug({ filename }, 'Screenshot saved');
   } catch (err) {
     logger.warn({ label, err: (err as Error).message }, 'Screenshot failed');
@@ -95,6 +95,175 @@ const CATEGORY_NAMES: Record<string, string> = {
 };
 
 const MISSING_CATEGORIES_FILE = './output/missing-categories.json';
+
+async function isPageAlive(page: Page): Promise<boolean> {
+  try {
+    await page.evaluate(() => document.title);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Recovery: launch a fresh browser + deals page, re-apply essential filters,
+ * and click "Find Deals" so the caller can resume category iteration.
+ *
+ * We launch a brand-new browser because the original Chromium process may
+ * have crashed entirely (not just a single page).
+ */
+async function recoverDealsPage(
+  options: { lowestEver?: boolean } = {}
+): Promise<{ browser: Browser; page: Page }> {
+  logger.info('Launching fresh browser for recovery');
+
+  const { browser: newBrowser, page: newPage } = await connect({
+    headless: true,
+    args: [
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-popup-blocking',
+      '--disable-prompt-on-repost',
+      '--disable-blink-features=AutomationControlled',
+      '--no-sandbox',
+      '--disable-crash-reporter',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+    ],
+    customConfig: {},
+    turnstile: true,
+    connectOption: { defaultViewport: undefined },
+    disableXvfb: true,
+    ignoreAllFlags: false,
+  });
+
+  await newPage.setViewport({ width: 1280, height: 800 });
+  await newPage.setUserAgent(
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  );
+
+  // Navigate to homepage first to set domain/language (fresh browser has no cookies)
+  await newPage.goto('https://keepa.com/', { waitUntil: 'networkidle2', timeout: 30000 });
+  await delay(2000);
+
+  // Select Amazon.it domain
+  await newPage.evaluate(() => {
+    const domainSelector = document.querySelector('.languageMenuImg[rel="domain"]');
+    if (domainSelector) (domainSelector as HTMLElement).click();
+  });
+  await delay(1000);
+  await newPage.evaluate(() => {
+    const option = document.querySelector('[setting="8"]');
+    if (option) (option as HTMLElement).click();
+  });
+  await delay(2000);
+  logger.debug('Recovery: Amazon.it domain selected');
+
+  // Navigate to deals page
+  await newPage.goto('https://keepa.com/#!deals', { waitUntil: 'networkidle2', timeout: 60000 });
+  await delay(5000);
+
+  // Handle Cloudflare if present
+  const hasCloudflare = await newPage.evaluate(() => {
+    return (
+      document.body.innerText.includes('Checking your browser') ||
+      document.title.includes('Just a moment')
+    );
+  });
+  if (hasCloudflare) {
+    logger.warn('Cloudflare challenge during recovery — waiting 90 s');
+    await delay(90_000);
+  }
+
+  // Wait for the deals UI to be fully loaded before applying filters
+  try {
+    await newPage.waitForSelector('#submitDealQuery', { timeout: 30000 });
+    logger.debug('Recovery: Find Deals button ready');
+  } catch {
+    logger.warn('Recovery: Find Deals button not found after 30s — proceeding anyway');
+  }
+
+  // Price type filter: Amazon
+  await newPage.evaluate(() => {
+    const container = document.getElementById('dealPriceTypesFilter');
+    if (!container) return;
+    const opt = container.querySelector('div[data-type="0"]') as HTMLElement | null;
+    if (opt) opt.click();
+  });
+  await delay(1000);
+
+  // Date range: 3 months
+  await newPage.evaluate(() => {
+    const container = document.getElementById('dealDateRange');
+    if (!container) return;
+    const opt = container.querySelector('[setting="3"]') as HTMLElement | null;
+    if (opt) opt.click();
+  });
+  await delay(500);
+
+  // Range filter panel
+  await ensurePanelExpanded(
+    newPage,
+    'panelRangeSelectionDisableCross',
+    'panelRangeSelection',
+    'Recovery: Seleziona Range'
+  );
+  await delay(300);
+  await setCheckboxById(
+    newPage,
+    'checkboxDeltaLastRange',
+    true,
+    'Recovery: Solo ultima variazione'
+  );
+  await delay(300);
+
+  // Applica filtri panel
+  await ensurePanelExpanded(
+    newPage,
+    'panelFilterSelectionDisableCross',
+    'dealCheckBoxes',
+    'Recovery: Applica filtri'
+  );
+  await delay(300);
+  await setCheckboxById(
+    newPage,
+    'checkboxLowestEver',
+    options.lowestEver ?? false,
+    'Recovery: Minimo'
+  );
+  await delay(200);
+  await setCheckboxById(newPage, 'checkboxHasReviews', true, 'Recovery: Recensioni');
+  await delay(200);
+  await setCheckboxById(newPage, 'checkboxFilterErotic', true, 'Recovery: Filtra adulti');
+  await delay(200);
+  await setCheckboxById(newPage, 'checkboxSingleVariation', true, 'Recovery: Variante singola');
+  await delay(300);
+
+  // Click Find Deals
+  await newPage.evaluate(() => {
+    const button = document.querySelector('#submitDealQuery');
+    if (button) (button as HTMLElement).click();
+  });
+
+  // Wait for products
+  let ready = false;
+  const start = Date.now();
+  while (!ready && Date.now() - start < 60_000) {
+    ready = await newPage.evaluate(() => {
+      const productPage = document.querySelector('#productPage0');
+      const loadingIcon = document.querySelector('#loadingIcon');
+      const loading = loadingIcon && (loadingIcon as HTMLElement).style.display !== 'none';
+      return !!productPage && productPage.innerHTML.trim().length > 50 && !loading;
+    });
+    if (!ready) await delay(2000);
+  }
+
+  if (!ready) throw new Error('Timeout waiting for products after recovery');
+
+  await takeScreenshot(newPage, 'recovery_deals_ready');
+  logger.info('Deals page recovered successfully');
+  return { browser: newBrowser, page: newPage };
+}
 
 async function clickFilterToggle(
   page: Page,
@@ -320,10 +489,47 @@ interface ReviewData {
   reviewCount: number | undefined;
 }
 
-async function scrapeAllCategories(page: Page): Promise<KeepaProduct[]> {
+async function scrapeAllCategories(
+  page: Page,
+  browser: Browser
+): Promise<{ products: KeepaProduct[]; activePage: Page; activeBrowser: Browser }> {
   logger.info('Navigating through selected categories');
 
   const products: KeepaProduct[] = [];
+
+  // Mutable references — may be replaced by a recovered browser/page
+  let activePage = page;
+  let activeBrowser = browser;
+
+  // Create a dedicated page for product detail extraction.
+  // This avoids the fragile click+goBack pattern on the main deals page,
+  // which crashes the browser session after heavy DOM manipulation.
+  let detailPage: Page | undefined;
+  let detailPageInitialized = false;
+  let mainPageClosed = false;
+
+  // Track unexpected main-page close for diagnostics
+  const attachCloseListener = (p: Page) => {
+    p.on('close', () => {
+      logger.error('Main deals page was closed unexpectedly');
+      mainPageClosed = true;
+    });
+  };
+  attachCloseListener(activePage);
+
+  try {
+    detailPage = await activeBrowser.newPage();
+    await detailPage.setViewport({ width: 1280, height: 800 });
+    await detailPage.setUserAgent(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    );
+    logger.info('Detail page created for product extraction');
+  } catch (err) {
+    logger.warn(
+      { err: (err as Error).message },
+      'Could not create detail page — reviews will be skipped'
+    );
+  }
 
   for (const categoryId of config.keepa.categories) {
     const categoryName = CATEGORY_NAMES[categoryId];
@@ -332,10 +538,65 @@ async function scrapeAllCategories(page: Page): Promise<KeepaProduct[]> {
       continue;
     }
 
+    // Recover if the main deals page session died
+    if (mainPageClosed || !(await isPageAlive(activePage))) {
+      logger.error('Main page session died — attempting recovery');
+      try {
+        // Close old browser (process may already be dead — ignore errors)
+        try {
+          await activeBrowser.close();
+        } catch {
+          /* already dead */
+        }
+        // Close old detail page reference
+        detailPage = undefined;
+        detailPageInitialized = false;
+
+        const recovered = await recoverDealsPage();
+        activeBrowser = recovered.browser;
+        activePage = recovered.page;
+        mainPageClosed = false;
+        attachCloseListener(activePage);
+
+        // Re-create detail page on the new browser
+        try {
+          detailPage = await activeBrowser.newPage();
+          await detailPage.setViewport({ width: 1280, height: 800 });
+          await detailPage.setUserAgent(
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          );
+          logger.info('Detail page re-created after recovery');
+        } catch (err) {
+          logger.warn(
+            { err: (err as Error).message },
+            'Could not create detail page after recovery'
+          );
+        }
+      } catch (err) {
+        logger.error(
+          { err: (err as Error).message },
+          'Recovery failed — aborting category iteration'
+        );
+        break;
+      }
+    }
+
     logger.info({ category: categoryName, categoryId }, 'Processing category');
 
     try {
-      const clicked = await page.evaluate((targetCategory: string) => {
+      // Capture the first ASIN currently visible BEFORE the category click,
+      // so we can detect when the SPA actually swaps content after the click.
+      const previousFirstAsin = await activePage.evaluate(() => {
+        const firstContainer = document.getElementById('p0');
+        if (!firstContainer) return '';
+        const link = firstContainer.querySelector(':scope > a[href*="#!product/"]');
+        if (!link) return '';
+        const href = link.getAttribute('href') ?? '';
+        const m = href.match(/#!product\/\d+-([A-Z0-9]{10})/);
+        return m ? m[1] : '';
+      });
+
+      const clicked = await activePage.evaluate((targetCategory: string) => {
         const links = Array.from(document.querySelectorAll('a'));
         const categoryLink = links.find(link => {
           const text = link.textContent?.trim() ?? '';
@@ -355,19 +616,8 @@ async function scrapeAllCategories(page: Page): Promise<KeepaProduct[]> {
       }
 
       logger.debug({ category: categoryName }, 'Category link clicked');
-      await takeScreenshot(page, `pass1_cat_${categoryId}_clicked`);
+      await takeScreenshot(activePage, `pass1_cat_${categoryId}_clicked`);
       logger.debug({ category: categoryName }, 'Waiting for products to load');
-
-      // Capture the first ASIN currently visible before the category switch
-      const previousFirstAsin = await page.evaluate(() => {
-        const firstContainer = document.getElementById('p0');
-        if (!firstContainer) return '';
-        const link = firstContainer.querySelector(':scope > a[href*="#!product/"]');
-        if (!link) return '';
-        const href = link.getAttribute('href') ?? '';
-        const m = href.match(/#!product\/\d+-([A-Z0-9]{10})/);
-        return m ? m[1] : '';
-      });
 
       let productsReady = false;
       const maxWait = 30000;
@@ -375,7 +625,7 @@ async function scrapeAllCategories(page: Page): Promise<KeepaProduct[]> {
       const start = Date.now();
 
       while (!productsReady && Date.now() - start < maxWait) {
-        productsReady = await page.evaluate((prevAsin: string) => {
+        productsReady = await activePage.evaluate((prevAsin: string) => {
           const productPage = document.querySelector('#productPage0');
           const loadingIcon = document.querySelector('#loadingIcon');
           const isLoading = loadingIcon && (loadingIcon as HTMLElement).style.display !== 'none';
@@ -407,14 +657,14 @@ async function scrapeAllCategories(page: Page): Promise<KeepaProduct[]> {
 
       if (!productsReady) {
         logger.warn({ category: categoryName }, 'Timeout waiting for products');
-        await takeScreenshot(page, `pass1_cat_${categoryId}_timeout`);
+        await takeScreenshot(activePage, `pass1_cat_${categoryId}_timeout`);
         continue;
       }
 
       logger.debug({ category: categoryName }, 'Products loaded');
-      await takeScreenshot(page, `pass1_cat_${categoryId}_loaded`);
+      await takeScreenshot(activePage, `pass1_cat_${categoryId}_loaded`);
 
-      const productLinks = await page.evaluate(
+      const productLinks = await activePage.evaluate(
         (
           maxProducts: number
         ): {
@@ -551,95 +801,113 @@ async function scrapeAllCategories(page: Page): Promise<KeepaProduct[]> {
             'Processing product'
           );
 
-          const clickSuccess = await page.evaluate((targetAsin: string) => {
-            const links = Array.from(
-              document.querySelectorAll('a[href*="#!product/"]')
-            ) as HTMLAnchorElement[];
-            const link = links.find(l => l.getAttribute('href')?.includes(`-${targetAsin}`));
-            if (link) {
-              link.click();
-              return true;
-            }
-            return false;
-          }, asin);
+          // Extract review data using the dedicated detail page (isolated tab).
+          // This avoids click+goBack on the main deals page which causes session crashes.
+          let reviewData: ReviewData = { rating: undefined, reviewCount: undefined };
 
-          if (!clickSuccess) {
-            logger.warn({ asin }, 'Could not click product link');
-            await takeScreenshot(page, `product_${asin}_click_fail`);
-            categoryProducts.push({
-              asin,
-              category: categoryName,
-              discount,
-              avgPrice,
-              currentPrice,
-              rating: undefined,
-              reviewCount: undefined,
-              isLowest: false,
-            });
-            continue;
-          }
-
-          await delay(2000);
-          await page.waitForSelector('#productInfoBox', { timeout: 10000 }).catch(() => undefined);
-          await takeScreenshot(page, `product_${asin}_detail`);
-
-          const reviewData: ReviewData = await page.evaluate(
-            (): { rating: number | undefined; reviewCount: number | undefined } => {
-              const data: { rating: number | undefined; reviewCount: number | undefined } = {
-                rating: undefined,
-                reviewCount: undefined,
-              };
-
-              try {
-                const productInfoBox = document.querySelector('#productInfoBox');
-                if (productInfoBox) {
-                  const firstDiv = productInfoBox.querySelector('div');
-                  if (firstDiv) {
-                    const fullText = firstDiv.textContent?.trim() ?? '';
-
-                    let ratingMatch = fullText.match(
-                      /(\d+[.,]\d+)\s*(?:su\s*\d+\s*)?(stelle|stars?)/i
-                    );
-                    if (!ratingMatch) {
-                      ratingMatch = fullText.match(/(\d+[.,]\d+)(?!\s*(?:cm|mm|kg|x|×))/);
-                    }
-
-                    if (ratingMatch) {
-                      const parsedRating = parseFloat(ratingMatch[1].replace(',', '.'));
-                      if (parsedRating >= 0 && parsedRating <= 5) {
-                        data.rating = parsedRating;
-                      }
-                    }
-
-                    // Look for review count near the rating/stars text to avoid
-                    // matching unrelated parenthesized numbers (sales rank, etc.)
-                    const reviewPatterns = [
-                      // "(80 recensioni)", "(80 valutazioni)", "(80 ratings)"
-                      /\((\d[\d.,]*)\s*(?:recensioni|valutazioni|reviews?|ratings?|Bewertungen)/i,
-                      // "(80)" right after "stelle" or "stars": "4.0 stelle (80)"
-                      /(?:stelle|stars?)\s*\((\d[\d.,]*)\)/i,
-                    ];
-
-                    for (const pattern of reviewPatterns) {
-                      const countMatch = fullText.match(pattern);
-                      if (countMatch) {
-                        const raw = (countMatch[1] ?? countMatch[2] ?? '').replace(/[.,]/g, '');
-                        const parsed = parseInt(raw, 10);
-                        if (!isNaN(parsed) && parsed > 0) {
-                          data.reviewCount = parsed;
-                          break;
-                        }
-                      }
-                    }
+          if (detailPage) {
+            try {
+              // Wrap the entire detail page extraction in a local timeout
+              // to avoid 3-minute protocol timeouts blocking the whole scrape.
+              const DETAIL_TIMEOUT_MS = 20_000;
+              reviewData = await Promise.race([
+                (async () => {
+                  if (!detailPageInitialized) {
+                    // First navigation: full page load (including Cloudflare)
+                    await detailPage!.goto(`https://keepa.com/#!product/8-${asin}`, {
+                      waitUntil: 'networkidle2',
+                      timeout: 30000,
+                    });
+                    detailPageInitialized = true;
+                  } else {
+                    // Subsequent navigations: SPA hash change (fast, no reload)
+                    await detailPage!.evaluate((hash: string) => {
+                      window.location.hash = hash;
+                    }, `!product/8-${asin}`);
                   }
-                }
-              } catch (e) {
-                // swallow — best-effort extraction
-              }
 
-              return data;
+                  await delay(1500);
+                  await detailPage!
+                    .waitForSelector('#productInfoBox', { timeout: 10000 })
+                    .catch(() => undefined);
+                  await takeScreenshot(detailPage!, `product_${asin}_detail`);
+
+                  return await detailPage!.evaluate(
+                    (): { rating: number | undefined; reviewCount: number | undefined } => {
+                      const data: { rating: number | undefined; reviewCount: number | undefined } =
+                        {
+                          rating: undefined,
+                          reviewCount: undefined,
+                        };
+
+                      try {
+                        const productInfoBox = document.querySelector('#productInfoBox');
+                        if (productInfoBox) {
+                          const firstDiv = productInfoBox.querySelector('div');
+                          if (firstDiv) {
+                            const fullText = firstDiv.textContent?.trim() ?? '';
+
+                            let ratingMatch = fullText.match(
+                              /(\d+[.,]\d+)\s*(?:su\s*\d+\s*)?(stelle|stars?)/i
+                            );
+                            if (!ratingMatch) {
+                              ratingMatch = fullText.match(/(\d+[.,]\d+)(?!\s*(?:cm|mm|kg|x|×))/);
+                            }
+
+                            if (ratingMatch) {
+                              const parsedRating = parseFloat(ratingMatch[1].replace(',', '.'));
+                              if (parsedRating >= 0 && parsedRating <= 5) {
+                                data.rating = parsedRating;
+                              }
+                            }
+
+                            const reviewPatterns = [
+                              /\((\d[\d.,]*)\s*(?:recensioni|valutazioni|reviews?|ratings?|Bewertungen)/i,
+                              /(?:stelle|stars?)\s*\((\d[\d.,]*)\)/i,
+                            ];
+
+                            for (const pattern of reviewPatterns) {
+                              const countMatch = fullText.match(pattern);
+                              if (countMatch) {
+                                const raw = (countMatch[1] ?? countMatch[2] ?? '').replace(
+                                  /[.,]/g,
+                                  ''
+                                );
+                                const parsed = parseInt(raw, 10);
+                                if (!isNaN(parsed) && parsed > 0) {
+                                  data.reviewCount = parsed;
+                                  break;
+                                }
+                              }
+                            }
+                          }
+                        }
+                      } catch {
+                        // swallow — best-effort extraction
+                      }
+
+                      return data;
+                    }
+                  );
+                })(),
+                new Promise<ReviewData>((_, reject) =>
+                  setTimeout(
+                    () => reject(new Error('Detail extraction timeout')),
+                    DETAIL_TIMEOUT_MS
+                  )
+                ),
+              ]);
+            } catch (err) {
+              logger.warn({ asin, err: (err as Error).message }, 'Detail page extraction failed');
+              // If the page is stuck, try to recover by navigating away
+              try {
+                await detailPage.goto('about:blank', { timeout: 5000 }).catch(() => undefined);
+                detailPageInitialized = false;
+              } catch {
+                // ignore recovery failure
+              }
             }
-          );
+          }
 
           const productData: KeepaProduct = {
             asin,
@@ -665,18 +933,8 @@ async function scrapeAllCategories(page: Page): Promise<KeepaProduct[]> {
             },
             'Product scraped'
           );
-
-          await page.goBack();
-          await delay(1500);
-          await page.waitForSelector('#productPage0', { timeout: 10000 }).catch(() => undefined);
         } catch (error) {
           logger.warn({ asin, err: (error as Error).message }, 'Error processing product');
-          try {
-            await page.goBack();
-            await delay(1500);
-          } catch {
-            logger.warn({ asin }, 'Could not recover page state');
-          }
         }
       }
 
@@ -696,6 +954,18 @@ async function scrapeAllCategories(page: Page): Promise<KeepaProduct[]> {
         }
       }
 
+      // Navigate detail page away from keepa.com between categories to avoid
+      // cross-page SPA interference that can crash the main deals page.
+      if (detailPage) {
+        try {
+          await detailPage.goto('about:blank', { timeout: 5000 }).catch(() => undefined);
+          detailPageInitialized = false;
+          logger.debug('Detail page reset to about:blank between categories');
+        } catch {
+          // ignore — detail page may already be dead
+        }
+      }
+
       await delay(config.keepa.scrapingDelayMs);
     } catch (error) {
       logger.error(
@@ -706,8 +976,18 @@ async function scrapeAllCategories(page: Page): Promise<KeepaProduct[]> {
     }
   }
 
+  // Clean up the detail page
+  if (detailPage) {
+    try {
+      await detailPage.close();
+      logger.debug('Detail page closed');
+    } catch {
+      // already closed
+    }
+  }
+
   logger.info({ totalProducts: products.length }, 'All categories scraped');
-  return products;
+  return { products, activePage, activeBrowser };
 }
 
 /**
@@ -728,7 +1008,24 @@ async function collectLowestAsins(page: Page): Promise<Set<string>> {
 
     logger.info({ category: categoryName, categoryId }, 'Pass 2: scanning category');
 
+    // Abort early if the page session died
+    if (!(await isPageAlive(page))) {
+      logger.error('Main page session died — aborting Pass 2 category iteration');
+      break;
+    }
+
     try {
+      // Capture first visible ASIN BEFORE category click to detect stale DOM
+      const previousFirstAsin = await page.evaluate(() => {
+        const container = document.getElementById('p0');
+        if (!container) return '';
+        const link = container.querySelector(':scope > a[href*="#!product/"]');
+        if (!link) return '';
+        const href = link.getAttribute('href') ?? '';
+        const m = href.match(/#!product\/\d+-([A-Z0-9]{10})/);
+        return m ? m[1] : '';
+      });
+
       const clicked = await page.evaluate((targetCategory: string) => {
         const links = Array.from(document.querySelectorAll('a'));
         const categoryLink = links.find(link => {
@@ -748,17 +1045,7 @@ async function collectLowestAsins(page: Page): Promise<Set<string>> {
         continue;
       }
 
-      // Capture first visible ASIN before category switch to detect stale DOM
       await takeScreenshot(page, `pass2_cat_${categoryId}_clicked`);
-      const previousFirstAsin = await page.evaluate(() => {
-        const container = document.getElementById('p0');
-        if (!container) return '';
-        const link = container.querySelector(':scope > a[href*="#!product/"]');
-        if (!link) return '';
-        const href = link.getAttribute('href') ?? '';
-        const m = href.match(/#!product\/\d+-([A-Z0-9]{10})/);
-        return m ? m[1] : '';
-      });
 
       let ready = false;
       const maxWait = 30000;
@@ -884,6 +1171,9 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
         '--disable-prompt-on-repost',
         '--disable-blink-features=AutomationControlled',
         '--no-sandbox',
+        '--disable-crash-reporter',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
       ],
       customConfig: {},
       turnstile: true,
@@ -1254,60 +1544,73 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
 
     // ── Pass 1: Normal scraping (Minimo OFF) ───────────────────────────────
     logger.info('Pass 1: normal deal scraping (Minimo OFF)');
-    const pass1Products = await scrapeAllCategories(page);
+    const {
+      products: pass1Products,
+      activePage,
+      activeBrowser,
+    } = await scrapeAllCategories(page, browser!);
+
+    // Use the (possibly recovered) browser and page for pass 2
+    browser = activeBrowser;
+    const dealsPage = activePage;
 
     // ── Pass 2: Enable "minimo" filter, collect ASINs only ───────────────
     logger.info('Pass 2: collecting lowest-ever ASINs (Minimo ON)');
     let lowestAsins = new Set<string>();
     try {
-      // Ensure the "Applica filtri" panel is still expanded before Pass 2
-      await ensurePanelExpanded(
-        page,
-        'panelFilterSelectionDisableCross',
-        'dealCheckBoxes',
-        'Applica filtri'
-      );
-      await delay(300);
-
-      await setCheckboxById(page, 'checkboxLowestEver', true, '"Minimo" enabled for Pass 2');
-      await delay(500);
-
-      logger.info('Clicking Find Deals for pass 2');
-      await page.evaluate(() => {
-        const button = document.querySelector('#submitDealQuery');
-        if (button) (button as HTMLElement).click();
-      });
-
-      let passReady = false;
-      const maxWaitPass2 = 60000;
-      const checkIntPass2 = 2000;
-      const startPass2 = Date.now();
-
-      while (!passReady && Date.now() - startPass2 < maxWaitPass2) {
-        passReady = await page.evaluate(() => {
-          const productPage = document.querySelector('#productPage0');
-          const loadingIcon = document.querySelector('#loadingIcon');
-          const loadingVisible =
-            loadingIcon && (loadingIcon as HTMLElement).style.display !== 'none';
-          if (productPage) {
-            return productPage.innerHTML.trim().length > 50 && !loadingVisible;
-          }
-          return false;
-        });
-        if (!passReady) await delay(checkIntPass2);
-      }
-
-      if (passReady) {
-        logger.info('Pass 2 results loaded');
-        await takeScreenshot(page, 'pass2_find_deals_ready');
+      // If the page died during pass 1 and could not recover, skip pass 2
+      if (!(await isPageAlive(dealsPage))) {
+        logger.warn('Deals page not alive — skipping pass 2');
       } else {
-        logger.warn('Timeout waiting for pass 2 results');
-        await takeScreenshot(page, 'pass2_find_deals_timeout');
+        // Ensure the "Applica filtri" panel is still expanded before Pass 2
+        await ensurePanelExpanded(
+          dealsPage,
+          'panelFilterSelectionDisableCross',
+          'dealCheckBoxes',
+          'Applica filtri'
+        );
+        await delay(300);
+
+        await setCheckboxById(dealsPage, 'checkboxLowestEver', true, '"Minimo" enabled for Pass 2');
+        await delay(500);
+
+        logger.info('Clicking Find Deals for pass 2');
+        await dealsPage.evaluate(() => {
+          const button = document.querySelector('#submitDealQuery');
+          if (button) (button as HTMLElement).click();
+        });
+
+        let passReady = false;
+        const maxWaitPass2 = 60000;
+        const checkIntPass2 = 2000;
+        const startPass2 = Date.now();
+
+        while (!passReady && Date.now() - startPass2 < maxWaitPass2) {
+          passReady = await dealsPage.evaluate(() => {
+            const productPage = document.querySelector('#productPage0');
+            const loadingIcon = document.querySelector('#loadingIcon');
+            const loadingVisible =
+              loadingIcon && (loadingIcon as HTMLElement).style.display !== 'none';
+            if (productPage) {
+              return productPage.innerHTML.trim().length > 50 && !loadingVisible;
+            }
+            return false;
+          });
+          if (!passReady) await delay(checkIntPass2);
+        }
+
+        if (passReady) {
+          logger.info('Pass 2 results loaded');
+          await takeScreenshot(dealsPage, 'pass2_find_deals_ready');
+        } else {
+          logger.warn('Timeout waiting for pass 2 results');
+          await takeScreenshot(dealsPage, 'pass2_find_deals_timeout');
+        }
+
+        await delay(2000);
+
+        lowestAsins = await collectLowestAsins(dealsPage);
       }
-
-      await delay(2000);
-
-      lowestAsins = await collectLowestAsins(page);
     } catch (error) {
       logger.warn({ err: (error as Error).message }, 'Error in pass 2');
     }

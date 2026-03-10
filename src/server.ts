@@ -20,6 +20,15 @@ import { createComponentLogger } from './utils/logger.js';
 
 const logger = createComponentLogger('Server');
 
+// ─── Global unhandled rejection handler ───────────────────────────────────────
+// whatsapp-web.js throws unhandled rejections from internal fire-and-forget
+// callbacks (e.g. Store injection failure). Capture them for diagnostics.
+process.on('unhandledRejection', reason => {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  const stack = reason instanceof Error ? reason.stack : undefined;
+  logger.error({ reason: message, stack }, 'Unhandled rejection');
+});
+
 const app = express();
 
 // ─── Global middleware ────────────────────────────────────────────────────────

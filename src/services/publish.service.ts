@@ -1,6 +1,7 @@
 import { formatPrice } from '../utils/format.js';
 import { createComponentLogger } from '../utils/logger.js';
 import {
+  areAllChannelsReady,
   dispatchToChannels,
   getActiveChannels,
   markDealPublished,
@@ -108,6 +109,13 @@ export interface PublishResult {
 }
 
 export async function runPublishCycle(): Promise<PublishResult | undefined> {
+  // All configured channels must be operational before publishing
+  const channelCheck = areAllChannelsReady();
+  if (!channelCheck.ready) {
+    logger.warn({ reason: channelCheck.reason }, 'Channels not ready — skipping publish cycle');
+    return undefined;
+  }
+
   const deal = await selectNextDeal();
   if (!deal) {
     logger.info('No unpublished deals available — skipping publish cycle');

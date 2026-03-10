@@ -14,6 +14,7 @@ let client: ClientType | undefined;
 let qrCode: string | undefined;
 let isReady = false;
 let isInitializing = false;
+let readyTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
 type WhatsAppStatus = 'disconnected' | 'initializing' | 'qr_pending' | 'ready';
 
@@ -30,6 +31,24 @@ export function getWhatsAppStatus(): { status: WhatsAppStatus; qr: string | unde
 // "already running" errors on the next start. We clean them before init.
 
 const CHROMIUM_LOCK_FILES = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+
+/**
+ * Clears the contents of a directory without removing the directory itself.
+ * This is necessary because Docker volume mount points sit on a read-only
+ * filesystem and cannot be deleted.
+ */
+function clearDirectoryContents(dirPath: string): void {
+  if (!fs.existsSync(dirPath)) return;
+  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      fs.rmSync(fullPath, { recursive: true, force: true });
+    } else {
+      fs.unlinkSync(fullPath);
+    }
+  }
+}
 
 function cleanupStaleLocks(sessionDataPath: string): void {
   try {
@@ -83,6 +102,13 @@ export async function initWhatsApp(): Promise<void> {
     authStrategy: new LocalAuth({
       dataPath: config.whatsapp.sessionDataPath,
     }),
+    webVersionCache: {
+      type: 'none',
+    },
+    // Override the library default (Chrome 101) with a UA matching the
+    // container's Chromium 145 to avoid handshake mismatches.
+    userAgent:
+      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.7632.159 Safari/537.36',
     puppeteer: {
       headless: true,
       args: [
@@ -90,6 +116,7 @@ export async function initWhatsApp(): Promise<void> {
         '--disable-setuid-sandbox',
         '--disable-gpu',
         '--disable-dev-shm-usage',
+        '--disable-crash-reporter',
       ],
       ...(chromiumPath ? { executablePath: chromiumPath } : {}),
     },
@@ -104,11 +131,43 @@ export async function initWhatsApp(): Promise<void> {
     isReady = true;
     isInitializing = false;
     qrCode = undefined;
+    if (readyTimeoutHandle) {
+      clearTimeout(readyTimeoutHandle);
+      readyTimeoutHandle = undefined;
+    }
     logger.info('WhatsApp client is ready');
+  });
+
+  client.on('loading_screen', (percent: string, message: string) => {
+    logger.info({ percent, message }, 'WhatsApp loading');
   });
 
   client.on('authenticated', () => {
     logger.info('WhatsApp session authenticated');
+
+    // If 'ready' doesn't fire within 2 minutes, the session is likely corrupt.
+    // Clear it and reinitialize to get a fresh QR code.
+    readyTimeoutHandle = setTimeout(() => {
+      if (isReady) return; // ready fired in the meantime
+      logger.error('WhatsApp ready timeout — clearing session and reinitializing');
+      isInitializing = false;
+      const sessionPath = config.whatsapp.sessionDataPath;
+      try {
+        clearDirectoryContents(sessionPath);
+        logger.info({ path: sessionPath }, 'Cleared stale WhatsApp session (ready timeout)');
+      } catch (err) {
+        logger.warn({ error: (err as Error).message }, 'Failed to clear session data');
+      }
+      try {
+        client?.destroy();
+      } catch {
+        // ignore
+      }
+      client = undefined;
+      setTimeout(() => {
+        void initWhatsApp();
+      }, 5000);
+    }, 120_000);
   });
 
   client.on('auth_failure', (msg: string) => {
@@ -119,10 +178,8 @@ export async function initWhatsApp(): Promise<void> {
     // Clear the session data so the next init gets a fresh QR code
     const sessionPath = config.whatsapp.sessionDataPath;
     try {
-      if (fs.existsSync(sessionPath)) {
-        fs.rmSync(sessionPath, { recursive: true, force: true });
-        logger.info({ path: sessionPath }, 'Cleared stale WhatsApp session data');
-      }
+      clearDirectoryContents(sessionPath);
+      logger.info({ path: sessionPath }, 'Cleared stale WhatsApp session data');
     } catch (err) {
       logger.warn({ error: (err as Error).message }, 'Failed to clear session data');
     }
@@ -138,14 +195,45 @@ export async function initWhatsApp(): Promise<void> {
     isReady = false;
     isInitializing = false;
     qrCode = undefined;
-    logger.warn({ reason }, 'WhatsApp client disconnected');
+    logger.warn({ reason }, 'WhatsApp client disconnected — will retry in 10s');
+
+    // Auto-reconnect after disconnect (mirrors auth_failure recovery)
+    client = undefined;
+    setTimeout(() => {
+      void initWhatsApp();
+    }, 10000);
   });
 
   try {
     await client.initialize();
+
+    // Attach browser-side diagnostic listeners so we can see errors
+    // that happen _inside_ the WhatsApp Web page (e.g. Store injection failures).
+    // These fire AFTER initialize() returns but BEFORE the user scans the QR code.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pupPage = (client as any).pupPage;
+    if (pupPage) {
+      // Catch browser-side unhandled promise rejections (e.g. ExposeStore failure)
+      await pupPage.evaluate(() => {
+        window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
+          console.error('BROWSER_UNHANDLED_REJECTION:', String(event.reason));
+        });
+      });
+
+      pupPage.on('pageerror', (err: Error) => {
+        logger.error({ browserError: err.message }, 'WhatsApp browser page error');
+      });
+      pupPage.on('console', (msg: { type: () => string; text: () => string }) => {
+        if (msg.type() === 'error') {
+          logger.warn({ browserConsole: msg.text() }, 'WhatsApp browser console error');
+        }
+      });
+    }
   } catch (err) {
     isInitializing = false;
-    logger.error({ err: (err as Error).message }, 'WhatsApp client initialization failed');
+    const message = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack : undefined;
+    logger.error({ err: message, stack }, 'WhatsApp client initialization failed');
   }
 }
 

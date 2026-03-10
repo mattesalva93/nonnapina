@@ -1,6 +1,7 @@
 import { formatPrice } from '../utils/format.js';
 import { createComponentLogger } from '../utils/logger.js';
 import {
+  areAllChannelsReady,
   dispatchToChannels,
   getActiveChannels,
   markDealPublished,
@@ -126,6 +127,12 @@ export function buildLowestPostContent(deal: {
 // ─── Orchestration ────────────────────────────────────────────────────────────
 
 export async function runLowestDealCycle(): Promise<PublishResult | undefined> {
+  const channelCheck = areAllChannelsReady();
+  if (!channelCheck.ready) {
+    logger.warn({ reason: channelCheck.reason }, 'Channels not ready — skipping lowest-deal cycle');
+    return undefined;
+  }
+
   const deal = await selectNextLowestDeal();
   if (!deal) {
     logger.info('No unpublished lowest-price deals available — falling back to regular cycle');

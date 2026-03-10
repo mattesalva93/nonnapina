@@ -2,6 +2,7 @@ import { config } from '../../config/index.js';
 import { createComponentLogger } from '../../utils/logger.js';
 import { sendErrorAlert } from '../email.service.js';
 import { prisma } from '../product.service.js';
+import { getWhatsAppStatus } from '../whatsapp.service.js';
 import type {
   BufferChannelDef,
   ChannelDef,
@@ -25,6 +26,20 @@ export function getActiveChannels(): ChannelDef[] {
   }
 
   return channels;
+}
+
+/**
+ * Checks whether every configured channel is currently operational.
+ * If WhatsApp is configured but not ready, returns false.
+ */
+export function areAllChannelsReady(): { ready: boolean; reason?: string } {
+  if (config.whatsapp.channelId) {
+    const waStatus = getWhatsAppStatus();
+    if (waStatus.status !== 'ready') {
+      return { ready: false, reason: `WhatsApp is ${waStatus.status}` };
+    }
+  }
+  return { ready: true };
 }
 
 export async function dispatchToChannels(
