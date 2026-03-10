@@ -1,12 +1,12 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
-import 'dotenv/config';
+import { config } from '../config/index.js';
 import type { EnrichedProduct } from '../types/index.js';
 import { createComponentLogger } from '../utils/logger.js';
 
 const logger = createComponentLogger('ProductService');
 
-const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+const adapter = new PrismaPg({ connectionString: config.database.url });
 const prisma = new PrismaClient({ adapter });
 
 export { prisma };

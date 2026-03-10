@@ -1,3 +1,5 @@
+/// <reference lib="dom" />
+/// <reference lib="dom.iterable" />
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { connect } from 'puppeteer-real-browser';
@@ -1357,12 +1359,4 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
 
     throw error;
   }
-}
-
-if (import.meta.url === `file://${process.argv[1]}`) {
-  scrapeKeepaDeals()
-    .then(result => {
-      logger.info({ productCount: result.products.length }, 'Scraped products (standalone run)');
-    })
-    .catch(err => logger.error(err));
 }

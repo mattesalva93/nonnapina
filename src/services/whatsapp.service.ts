@@ -1,7 +1,8 @@
-import type { Channel, Client as ClientType } from 'whatsapp-web.js';
-import pkg from 'whatsapp-web.js';
+/// <reference lib="dom" />
 import fs from 'node:fs';
 import path from 'node:path';
+import type { Channel, Client as ClientType } from 'whatsapp-web.js';
+import pkg from 'whatsapp-web.js';
 import { config } from '../config/index.js';
 import { createComponentLogger } from '../utils/logger.js';
 

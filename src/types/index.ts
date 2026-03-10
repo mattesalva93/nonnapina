@@ -36,9 +36,6 @@ export interface AmazonProduct {
   parentASIN: string | undefined;
   title: string;
   price: number | undefined;
-  originalPrice: undefined;
-  discountAmount: undefined;
-  discountPercentage: undefined;
   currency: string;
   availability: ProductAvailability | undefined;
   rating: number | undefined;
@@ -129,53 +126,4 @@ export interface ApiItem {
   images?: ApiImages;
   offersV2?: { listings?: ApiListing[] };
   customerReviews?: ApiCustomerReviews;
-}
-
-// Image collage types
-export interface CollagePosition {
-  top: number;
-  left: number;
-}
-
-export interface CollageLayout {
-  canvasWidth: number;
-  canvasHeight: number;
-  positions: CollagePosition[];
-}
-
-export interface CollageProduct {
-  immagineLarge?: string;
-  immagineSmall?: string;
-  percentualeSconto?: string | number;
-}
-
-// Notes generator types
-export interface NoteProduct {
-  dataFetch?: string;
-  categoria?: string;
-  asin?: string;
-  titolo?: string;
-  prezzoOriginale?: string | number;
-  prezzoScontato?: string | number;
-  importoRisparmiato?: string | number;
-  percentualeSconto?: string | number;
-  valuta?: string;
-  disponibilita?: string;
-  tipoDisponibilita?: string;
-  rating?: string | number;
-  numeroReview?: string | number;
-  features?: string;
-  immagineSmall?: string;
-  immagineLarge?: string;
-  linkAffiliato?: string;
-  linkStorefront?: string;
-  parentASIN?: string;
-  marketplace?: string;
-}
-
-export interface NotesResult {
-  success: boolean;
-  message: string;
-  fileName?: string;
-  count?: number;
 }
