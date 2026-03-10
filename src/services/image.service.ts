@@ -29,7 +29,7 @@ function createBannerSvg(width: number, height: number): Buffer {
   <text x="${width / 2}" y="${height / 2 + 2}"
         font-family="Arial,Helvetica,sans-serif" font-size="38" font-weight="bold"
         fill="#FFD700" text-anchor="middle" dominant-baseline="middle"
-        letter-spacing="2">&#9733; TOP 5 DEALS DEL GIORNO &#9733;</text>
+        letter-spacing="2">&#9733; LE MIGLIORI 5 OFFERTE DEL GIORNO &#9733;</text>
 </svg>`;
   return Buffer.from(svg);
 }
