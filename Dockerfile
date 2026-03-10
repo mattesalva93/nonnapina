@@ -55,6 +55,9 @@ RUN npx prisma generate
 # Copy compiled output from builder stage
 COPY --from=builder /app/dist ./dist/
 
+# Copy entrypoint script
+COPY docker-entrypoint.sh ./
+
 # Create output and WhatsApp session dirs and give ownership to non-root user
 RUN mkdir -p output .wwebjs_auth && chown -R appuser:nodejs /app
 
@@ -67,5 +70,4 @@ ENV NODE_ENV=production
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD node -e "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-# Run migrations then start the server
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/server.js"]
+ENTRYPOINT ["./docker-entrypoint.sh"]

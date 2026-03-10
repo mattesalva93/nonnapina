@@ -8,8 +8,6 @@
 
 - [TASK017] Remove dead code and legacy artifacts — LOW
 - [TASK019] Fix package placement and TypeScript config — LOW
-- [TASK020] Docker improvements (entrypoint, resource limits, security) — MEDIUM
-- [TASK021] Increase test coverage — MEDIUM
 - [TASK023] Centralize DATABASE_URL usage via config module — LOW
 - [TASK024] Refactor AmazonService class to functions — LOW
 
@@ -33,6 +31,8 @@
 - [TASK022] Health check email flood prevention — Completed on 2026-03-10
 - [TASK016] Optimize DB queries (N+1) — Completed on 2026-03-10
 - [TASK018] Improve logging (request ID, IP, structured) — Completed on 2026-03-10
+- [TASK020] Docker improvements (entrypoint, resource limits, security) — Completed on 2026-03-11
+- [TASK021] Increase test coverage — Completed on 2026-03-11
 
 ## Abandoned
 
