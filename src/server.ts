@@ -1,8 +1,8 @@
 import express from 'express';
 import cron from 'node-cron';
 import { config, validateConfig } from './config/index.js';
-import { errorHandler } from './middleware/error-handler.js';
 import { authMiddleware } from './middleware/auth.js';
+import { errorHandler } from './middleware/error-handler.js';
 import { rateLimiter } from './middleware/rate-limiter.js';
 import { requestLogger } from './middleware/request-logger.js';
 import { dealsRouter } from './routes/deals.routes.js';

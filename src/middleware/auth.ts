@@ -39,7 +39,10 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   const [scheme, token] = authHeader.split(' ', 2);
 
   if (scheme !== 'Bearer' || !token) {
-    res.status(401).json({ error: 'Unauthorized', message: 'Invalid Authorization format. Use: Bearer <token>' });
+    res.status(401).json({
+      error: 'Unauthorized',
+      message: 'Invalid Authorization format. Use: Bearer <token>',
+    });
     return;
   }
 

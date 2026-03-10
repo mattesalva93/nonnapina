@@ -49,14 +49,14 @@ Given this is an internal API (not user-facing SaaS), a lightweight approach is 
 
 ### Subtasks
 
-| ID   | Description                            | Status   | Updated    | Notes                                      |
-| ---- | -------------------------------------- | -------- | ---------- | ------------------------------------------ |
+| ID   | Description                            | Status   | Updated    | Notes                                           |
+| ---- | -------------------------------------- | -------- | ---------- | ----------------------------------------------- |
 | 12.1 | Create auth middleware                 | Complete | 2026-03-10 | src/middleware/auth.ts with timing-safe compare |
 | 12.2 | Add API_SECRET to config/env           | Complete | 2026-03-10 | Added to config schema, rawConfig, .env.example |
-| 12.3 | Apply middleware to routes             | Complete | 2026-03-10 | Applied to all /api/* routes in server.ts   |
-| 12.4 | Exempt /health from auth               | Complete | 2026-03-10 | /health is defined before route middleware  |
-| 12.5 | Write tests                            | Complete | 2026-03-10 | 7 tests in auth.test.ts (all passing)       |
-| 12.6 | Update docker-compose and .env.example | Complete | 2026-03-10 | API_SECRET required in docker-compose.yml   |
+| 12.3 | Apply middleware to routes             | Complete | 2026-03-10 | Applied to all /api/\* routes in server.ts      |
+| 12.4 | Exempt /health from auth               | Complete | 2026-03-10 | /health is defined before route middleware      |
+| 12.5 | Write tests                            | Complete | 2026-03-10 | 7 tests in auth.test.ts (all passing)           |
+| 12.6 | Update docker-compose and .env.example | Complete | 2026-03-10 | API_SECRET required in docker-compose.yml       |
 
 ## Progress Log
 
@@ -65,7 +65,7 @@ Given this is an internal API (not user-facing SaaS), a lightweight approach is 
 - Task created from comprehensive codebase audit
 - Created src/middleware/auth.ts: Bearer token validation with timing-safe comparison (node:crypto timingSafeEqual)
 - Added `apiSecret` to config schema and rawConfig (reads API_SECRET env var)
-- Applied authMiddleware to all /api/* routes in server.ts (health endpoint exempt)
+- Applied authMiddleware to all /api/\* routes in server.ts (health endpoint exempt)
 - If API_SECRET is empty, middleware logs a warning and allows all requests (dev-friendly)
 - Added API_SECRET to .env.example and docker-compose.yml (required in production)
 - Created auth.test.ts with 7 tests covering: valid token, missing header, invalid token, wrong scheme, empty token, no config, different-length token

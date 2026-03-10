@@ -38,11 +38,11 @@ All vulnerabilities originate from **prisma@^7.4.2** and its internal tooling de
 
 ### Subtasks
 
-| ID   | Description                            | Status    | Updated    | Notes                                                  |
-| ---- | -------------------------------------- | --------- | ---------- | ------------------------------------------------------ |
-| 11.1 | Run `npm audit fix`                    | Complete  | 2026-03-10 | No non-breaking fixes available                        |
-| 11.2 | Evaluate prisma version update         | Complete  | 2026-03-10 | v7.4.2 is latest stable; fixed via overrides           |
-| 11.3 | Document accepted risk if unresolved   | Complete  | 2026-03-10 | All resolved via overrides                             |
+| ID   | Description                            | Status      | Updated    | Notes                                                     |
+| ---- | -------------------------------------- | ----------- | ---------- | --------------------------------------------------------- |
+| 11.1 | Run `npm audit fix`                    | Complete    | 2026-03-10 | No non-breaking fixes available                           |
+| 11.2 | Evaluate prisma version update         | Complete    | 2026-03-10 | v7.4.2 is latest stable; fixed via overrides              |
+| 11.3 | Document accepted risk if unresolved   | Complete    | 2026-03-10 | All resolved via overrides                                |
 | 11.4 | Move prisma CLI to devDeps if feasible | Not Started | 2026-03-10 | Deferred to TASK019/TASK020 (requires Dockerfile changes) |
 
 ## Progress Log

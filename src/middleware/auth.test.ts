@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // vi.mock factories are hoisted — use vi.hoisted for shared state
 const mockConfig = vi.hoisted(() => ({
