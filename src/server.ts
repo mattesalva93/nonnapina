@@ -11,9 +11,9 @@ import { publishRouter } from './routes/publish.routes.js';
 import { runScrapeJob, scrapeRouter } from './routes/scrape.routes.js';
 import { whatsappRouter } from './routes/whatsapp.routes.js';
 import { sendErrorAlert } from './services/email.service.js';
-import { getActiveRun, prisma, startScrapeRun } from './services/product.service.js';
-import { initPublishScheduler } from './services/scheduler.service.js';
-import { initWhatsApp } from './services/whatsapp.service.js';
+import { failScrapeRun, getActiveRun, prisma, startScrapeRun } from './services/product.service.js';
+import { initPublishScheduler, stopAllCronTasks } from './services/scheduler.service.js';
+import { destroyWhatsApp, initWhatsApp } from './services/whatsapp.service.js';
 import { localISOString } from './utils/date.js';
 import { createComponentLogger } from './utils/logger.js';
 
@@ -100,6 +100,13 @@ app.use((_req, res) => {
 // ─── Error handler (must be last) ────────────────────────────────────────────
 app.use(errorHandler);
 
+// ─── Start server ─────────────────────────────────────────────────────────────
+const { port } = config.server;
+
+const httpServer = app.listen(port, () => {
+  logger.info({ port, env: config.server.nodeEnv }, `Server running on port ${port}`);
+});
+
 // ─── Scheduled scraping ──────────────────────────────────────────────────────
 // Runs every day at 08:00 (can be overridden via SCRAPE_CRON env var)
 const { cronSchedule } = config.server;
@@ -121,7 +128,7 @@ if (config.server.nodeEnv !== 'test') {
     logger.info('WhatsApp not configured (WHATSAPP_CHANNEL_ID unset) — skipping initialization');
   }
 
-  cron.schedule(cronSchedule, () => {
+  const scrapeCronTask = cron.schedule(cronSchedule, () => {
     logger.info({ schedule: cronSchedule }, 'Scheduled scrape triggered');
     void (async () => {
       try {
@@ -153,13 +160,56 @@ if (config.server.nodeEnv !== 'test') {
 
   // ─── Scheduled publishing (randomised daily slots) ──────────────────────
   initPublishScheduler();
+
+  // ─── Graceful shutdown ──────────────────────────────────────────────────
+  const shutdown = async (signal: string) => {
+    logger.info({ signal }, 'Shutdown signal received — starting graceful shutdown');
+
+    // Force exit if cleanup hangs
+    const forceTimeout = setTimeout(() => {
+      logger.error('Graceful shutdown timed out — forcing exit');
+      process.exit(1);
+    }, 15_000);
+    forceTimeout.unref();
+
+    // 1. Stop accepting new HTTP requests
+    httpServer.close();
+
+    // 2. Stop all cron jobs
+    scrapeCronTask.stop();
+    stopAllCronTasks();
+
+    // 3. Mark any active scrape runs as failed
+    try {
+      const activeRun = await getActiveRun();
+      if (activeRun) {
+        await failScrapeRun(activeRun.id, `Server shutdown (${signal})`);
+        logger.info({ scrapeRunId: activeRun.id }, 'Active scrape run marked as FAILED');
+      }
+    } catch (err) {
+      logger.error({ err: (err as Error).message }, 'Failed to mark active scrape run');
+    }
+
+    // 4. Destroy WhatsApp client (releases Chromium)
+    try {
+      await destroyWhatsApp();
+    } catch (err) {
+      logger.error({ err: (err as Error).message }, 'WhatsApp cleanup failed');
+    }
+
+    // 5. Disconnect Prisma
+    try {
+      await prisma.$disconnect();
+    } catch (err) {
+      logger.error({ err: (err as Error).message }, 'Prisma disconnect failed');
+    }
+
+    logger.info('Graceful shutdown complete');
+    process.exit(0);
+  };
+
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
 }
-
-// ─── Start server ─────────────────────────────────────────────────────────────
-const { port } = config.server;
-
-app.listen(port, () => {
-  logger.info({ port, env: config.server.nodeEnv }, `Server running on port ${port}`);
-});
 
 export { app };

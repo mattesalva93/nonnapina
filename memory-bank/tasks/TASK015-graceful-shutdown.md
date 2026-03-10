@@ -1,8 +1,8 @@
 # [TASK015] - Add Graceful Shutdown Handlers
 
-**Status:** Pending
+**Status:** Completed
 **Added:** 2026-03-10
-**Updated:** 2026-03-10
+**Updated:** 2026-03-11
 **Priority:** HIGH
 **Category:** Reliability / Infrastructure
 
@@ -69,19 +69,31 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 
 ## Progress Tracking
 
-**Overall Status:** Not Started - 0%
+**Overall Status:** Completed - 100%
 
 ### Subtasks
 
-| ID   | Description                             | Status      | Updated | Notes |
-| ---- | --------------------------------------- | ----------- | ------- | ----- |
-| 15.1 | Refactor cron scheduling to store refs  | Not Started |         |       |
-| 15.2 | Store HTTP server reference             | Not Started |         |       |
-| 15.3 | Implement shutdown function             | Not Started |         |       |
-| 15.4 | Register signal handlers                | Not Started |         |       |
-| 15.5 | Add forced exit timeout                 | Not Started |         |       |
-| 15.6 | Mark active ScrapeRun as FAILED on exit | Not Started |         |       |
-| 15.7 | Test in Docker container                | Not Started |         |       |
+| ID   | Description                            | Status   | Updated    | Notes                                  |
+| ---- | -------------------------------------- | -------- | ---------- | -------------------------------------- |
+| 15.1 | Refactor cron scheduling to store refs | Complete | 2026-03-11 | cronTasks array + stopAllCronTasks()   |
+| 15.2 | Store HTTP server reference            | Complete | 2026-03-11 | Moved app.listen() before the if block |
+| 15.3 | Implement shutdown function            | Complete | 2026-03-11 | 5-step cleanup with 15s force timeout  |
+
+## Progress Log
+
+### 2026-03-11
+
+- Refactored scheduler.service.ts: stored cron tasks in cronTasks array, added stopAllCronTasks()
+- Moved httpServer declaration before the cron/WhatsApp init block for scope accessibility
+- Stored scrapeCronTask reference in server.ts
+- Implemented shutdown() function: stops HTTP server, stops all cron jobs, marks active ScrapeRun as FAILED, destroys WhatsApp client, disconnects Prisma
+- Registered SIGTERM and SIGINT handlers
+- Added 15s force-exit timeout with unref()
+- All 54 tests passing, 0 TypeScript errors
+  | 15.4 | Register signal handlers | Not Started | | |
+  | 15.5 | Add forced exit timeout | Not Started | | |
+  | 15.6 | Mark active ScrapeRun as FAILED on exit | Not Started | | |
+  | 15.7 | Test in Docker container | Not Started | | |
 
 ## Progress Log
 

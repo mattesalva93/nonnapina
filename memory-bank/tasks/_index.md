@@ -6,8 +6,6 @@
 
 ## Pending
 
-- [TASK013] DRY refactor: extract shared channel dispatch and scoring — HIGH
-- [TASK015] Add graceful shutdown handlers — HIGH
 - [TASK016] Optimize DB queries (N+1 in saveProducts/markDealsAsLowest) — MEDIUM
 - [TASK017] Remove dead code and legacy artifacts — LOW
 - [TASK018] Improve logging (request ID, IP, structured scraper logs) — MEDIUM
@@ -32,6 +30,8 @@
 - [TASK011] Fix dependency vulnerabilities — Completed on 2026-03-10
 - [TASK012] Add API authentication middleware — Completed on 2026-03-10
 - [TASK014] Fix zod config validation — Completed on 2026-03-10
+- [TASK013] DRY refactor: extract shared channel dispatch and scoring — Completed on 2026-03-11
+- [TASK015] Add graceful shutdown handlers — Completed on 2026-03-11
 - [TASK022] Health check email flood prevention — Completed on 2026-03-10
 
 ## Abandoned

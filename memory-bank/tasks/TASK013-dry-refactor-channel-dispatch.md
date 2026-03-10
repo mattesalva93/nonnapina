@@ -1,8 +1,8 @@
 # [TASK013] - DRY Refactor: Extract Shared Channel Dispatch and Scoring
 
-**Status:** Pending
+**Status:** Completed
 **Added:** 2026-03-10
-**Updated:** 2026-03-10
+**Updated:** 2026-03-11
 **Priority:** HIGH
 **Category:** Code Quality / Spaghetti Code
 
@@ -66,25 +66,42 @@ utils/
 
 ## Progress Tracking
 
-**Overall Status:** Not Started - 0%
+**Overall Status:** Completed - 100%
 
 ### Subtasks
 
-| ID    | Description                                | Status      | Updated | Notes |
-| ----- | ------------------------------------------ | ----------- | ------- | ----- |
-| 13.1  | Create channel types and shared interfaces | Not Started |         |       |
-| 13.2  | Extract Telegram dispatcher                | Not Started |         |       |
-| 13.3  | Extract WhatsApp dispatcher                | Not Started |         |       |
-| 13.4  | Create channel registry                    | Not Started |         |       |
-| 13.5  | Extract scoring module                     | Not Started |         |       |
-| 13.6  | Extract formatPrice utility                | Not Started |         |       |
-| 13.7  | Refactor publish.service.ts                | Not Started |         |       |
-| 13.8  | Refactor lowest-deal.service.ts            | Not Started |         |       |
-| 13.9  | Refactor top5.service.ts                   | Not Started |         |       |
-| 13.10 | Extract shared publication recording logic | Not Started |         |       |
-| 13.11 | Verify all tests pass                      | Not Started |         |       |
+| ID    | Description                                | Status   | Updated    | Notes                                         |
+| ----- | ------------------------------------------ | -------- | ---------- | --------------------------------------------- |
+| 13.1  | Create channel types and shared interfaces | Complete | 2026-03-11 | channel.types.ts                              |
+| 13.2  | Extract Telegram dispatcher                | Complete | 2026-03-11 | telegram.channel.ts (URL + buffer variants)   |
+| 13.3  | Extract WhatsApp dispatcher                | Complete | 2026-03-11 | whatsapp.channel.ts (URL + buffer variants)   |
+| 13.4  | Create channel registry                    | Complete | 2026-03-11 | channel.registry.ts with dispatch + recording |
+| 13.5  | Extract scoring module                     | Complete | 2026-03-11 | scoring.ts                                    |
+| 13.6  | Extract formatPrice utility                | Complete | 2026-03-11 | utils/format.ts                               |
+| 13.7  | Refactor publish.service.ts                | Complete | 2026-03-11 | ~265 → ~130 lines                             |
+| 13.8  | Refactor lowest-deal.service.ts            | Complete | 2026-03-11 | ~260 → ~135 lines                             |
+| 13.9  | Refactor top5.service.ts                   | Complete | 2026-03-11 | ~385 → ~220 lines                             |
+| 13.10 | Extract shared publication recording logic | Complete | 2026-03-11 | In channel.registry.ts                        |
+| 13.11 | Verify all tests pass                      | Complete | 2026-03-11 | 54/54 passing                                 |
 
 ## Progress Log
+
+### 2026-03-11
+
+- Created services/channels/ directory with 4 new files:
+  - channel.types.ts: ChannelName, ChannelResult, ChannelPayload, BufferChannelPayload, ChannelDef, BufferChannelDef
+  - telegram.channel.ts: publishToTelegram() + publishBufferToTelegram() (URL and buffer variants)
+  - whatsapp.channel.ts: publishToWhatsApp() + publishBufferToWhatsApp()
+  - channel.registry.ts: getActiveChannels(), dispatchToChannels(), dispatchToBufferChannels(), recordPublications(), markDealPublished()
+- Created services/scoring.ts: single computeDealScore() implementation
+- Created utils/format.ts: single formatPrice() implementation
+- Refactored publish.service.ts: removed all channel dispatch code, uses shared modules via re-exports
+- Refactored lowest-deal.service.ts: removed all channel/scoring duplication
+- Refactored top5.service.ts: removed duplicated scoring constants and channel code, uses buffer channel variants
+- Re-exported computeDealScore and ChannelName from publish.service.ts for backward compatibility
+- Re-exported computeTop5Score from top5.service.ts as alias for computeDealScore
+- All 54 tests passing, 0 TypeScript errors
+- Estimated ~300 lines of pure duplication removed
 
 ### 2026-03-10
 

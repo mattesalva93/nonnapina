@@ -1,20 +1,18 @@
-import { config } from '../config/index.js';
+import { formatPrice } from '../utils/format.js';
 import { createComponentLogger } from '../utils/logger.js';
-import { sendErrorAlert } from './email.service.js';
-import { prisma } from './product.service.js';
 import {
-  type ChannelName,
-  type PublishResult,
-  computeDealScore,
-  buildPostContent as buildRegularPostContent,
-} from './publish.service.js';
-import { sendToWhatsAppChannel } from './whatsapp.service.js';
-import axios from 'axios';
+  dispatchToChannels,
+  getActiveChannels,
+  markDealPublished,
+  recordPublications,
+} from './channels/channel.registry.js';
+import { prisma } from './product.service.js';
+import type { PublishResult } from './publish.service.js';
+import { computeDealScore } from './scoring.js';
 
 const logger = createComponentLogger('LowestDealService');
 
 // ─── Headline templates ──────────────────────────────────────────────────────
-// Each template receives a short product name and returns the headline.
 
 const HEADLINE_TEMPLATES: Array<(name: string) => string> = [
   name => `${name} al nuovo minimo storico`,
@@ -30,7 +28,6 @@ function pickRandomHeadline(name: string): string {
 }
 
 // ─── Title shortener ─────────────────────────────────────────────────────────
-// Strips trailing parenthesized specs and truncates to keep headlines readable.
 
 function shortenTitle(title: string, maxLength = 50): string {
   const cleaned = title.replace(/\s*\([^)]*\)\s*$/g, '').trim();
@@ -80,10 +77,6 @@ export async function selectNextLowestDeal() {
 
 // ─── Post template builder ───────────────────────────────────────────────────
 
-function formatPrice(value: number): string {
-  return value.toFixed(2).replace('.', ',');
-}
-
 export function buildLowestPostContent(deal: {
   product: { title: string };
   price: number | null;
@@ -107,15 +100,12 @@ export function buildLowestPostContent(deal: {
 
   const lines: string[] = [];
 
-  // Headline (alternative format)
   lines.push(`📢 ${headline}`);
   lines.push('');
 
-  // Full title
   lines.push(`💬 ${deal.product.title}`);
   lines.push('');
 
-  // Price line
   if (originalPrice && discount) {
     lines.push(`💰 Solo ${price}€ invece di ${originalPrice}€ (-${discount}%)`);
     lines.push('📊 Il prezzo pieno è calcolato sulla media degli ultimi 3 mesi');
@@ -124,107 +114,13 @@ export function buildLowestPostContent(deal: {
   }
   lines.push('');
 
-  // Affiliate link
   lines.push(`🔗 ${link}`);
   lines.push('');
 
-  // Rating + shipping
   lines.push(`⭐ ${reviews} Recensioni: ${rating} / 5.0`);
   lines.push('🚚 Venduto e spedito da Amazon');
 
   return lines.join('\n');
-}
-
-// ─── Channel dispatchers ─────────────────────────────────────────────────────
-
-interface ChannelResult {
-  channel: ChannelName;
-  success: boolean;
-  error?: string;
-}
-
-interface ChannelPayload {
-  postContent: string;
-  imageUrl: string | undefined;
-}
-
-async function publishToWhatsApp(payload: ChannelPayload): Promise<ChannelResult> {
-  const result = await sendToWhatsAppChannel(payload.postContent, payload.imageUrl);
-  if (!result.success) {
-    logger.error({ channel: 'WHATSAPP', error: result.error }, 'WhatsApp publish failed');
-  }
-  return { channel: 'WHATSAPP', success: result.success, error: result.error };
-}
-
-const TELEGRAM_CAPTION_LIMIT = 1024;
-
-async function publishToTelegram(payload: ChannelPayload): Promise<ChannelResult> {
-  const { botToken, chatId } = config.telegram;
-  if (!botToken || !chatId) {
-    return {
-      channel: 'TELEGRAM',
-      success: false,
-      error: 'TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not configured',
-    };
-  }
-
-  const baseUrl = `https://api.telegram.org/bot${botToken}`;
-  const { postContent, imageUrl } = payload;
-
-  try {
-    if (imageUrl && postContent.length <= TELEGRAM_CAPTION_LIMIT) {
-      await axios.post(
-        `${baseUrl}/sendPhoto`,
-        { chat_id: chatId, photo: imageUrl, caption: postContent },
-        { timeout: 15000 }
-      );
-    } else if (imageUrl) {
-      await axios.post(
-        `${baseUrl}/sendPhoto`,
-        { chat_id: chatId, photo: imageUrl },
-        { timeout: 15000 }
-      );
-      await axios.post(
-        `${baseUrl}/sendMessage`,
-        { chat_id: chatId, text: postContent, disable_web_page_preview: true },
-        { timeout: 15000 }
-      );
-    } else {
-      await axios.post(
-        `${baseUrl}/sendMessage`,
-        { chat_id: chatId, text: postContent, disable_web_page_preview: true },
-        { timeout: 15000 }
-      );
-    }
-
-    logger.info({ channel: 'TELEGRAM', chatId }, 'Lowest-deal published to Telegram');
-    return { channel: 'TELEGRAM', success: true };
-  } catch (err) {
-    const msg = axios.isAxiosError(err)
-      ? (err.response?.data?.description ?? err.message)
-      : (err as Error).message;
-    logger.error({ channel: 'TELEGRAM', error: msg }, 'Telegram publish failed');
-    return { channel: 'TELEGRAM', success: false, error: String(msg) };
-  }
-}
-
-interface ChannelDef {
-  name: ChannelName;
-  send: (payload: ChannelPayload) => Promise<ChannelResult>;
-}
-
-function getActiveChannels(): ChannelDef[] {
-  const channels: ChannelDef[] = [];
-
-  if (config.telegram.botToken && config.telegram.chatId) {
-    channels.push({ name: 'TELEGRAM', send: publishToTelegram });
-  }
-
-  if (config.whatsapp.channelId) {
-    channels.push({ name: 'WHATSAPP', send: publishToWhatsApp });
-  }
-
-  return channels;
 }
 
 // ─── Orchestration ────────────────────────────────────────────────────────────
@@ -245,51 +141,15 @@ export async function runLowestDealCycle(): Promise<PublishResult | undefined> {
     return undefined;
   }
 
-  const results: ChannelResult[] = [];
-  for (const channel of activeChannels) {
-    try {
-      const result = await channel.send({ postContent, imageUrl });
-      results.push(result);
-    } catch (err) {
-      results.push({
-        channel: channel.name,
-        success: false,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
+  const results = await dispatchToChannels(activeChannels, { postContent, imageUrl });
 
-  for (const result of results) {
-    await prisma.publication.create({
-      data: {
-        dealId: deal.id,
-        channel: result.channel,
-        postContent,
-        success: result.success,
-      },
-    });
-  }
-
-  const anySucceeded = results.some(r => r.success);
-  const allSucceeded = results.every(r => r.success);
-  if (anySucceeded) {
-    await prisma.deal.update({
-      where: { id: deal.id },
-      data: { published: true },
-    });
-    logger.info({ dealId: deal.id, asin: deal.asin }, 'Lowest-price deal marked as published');
-  }
-
-  if (!allSucceeded) {
-    for (const failure of results.filter(r => !r.success)) {
-      void sendErrorAlert({
-        errorMessage: `Lowest-deal publish failed on channel ${failure.channel}: ${failure.error ?? 'Unknown error'}`,
-        component: 'LowestDealService',
-        severity: 'error',
-        additionalData: { dealId: deal.id, asin: deal.asin, channel: failure.channel },
-      });
-    }
-  }
+  await recordPublications(deal.id, postContent, results);
+  const { allSucceeded } = await markDealPublished(
+    deal.id,
+    deal.asin,
+    results,
+    'LowestDealService'
+  );
 
   return {
     dealId: deal.id,

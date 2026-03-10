@@ -51,6 +51,8 @@ export function generateDailySchedule(): Set<string> {
 
 // ─── Scheduler bootstrap ─────────────────────────────────────────────────────
 
+const cronTasks: cron.ScheduledTask[] = [];
+
 export function initPublishScheduler(): void {
   dailySchedule = generateDailySchedule();
   const sortedSlots = [...dailySchedule].sort();
@@ -61,74 +63,80 @@ export function initPublishScheduler(): void {
   void sendScheduleEmail(sortedSlots, 'startup');
 
   // Regenerate at midnight for the new day
-  cron.schedule('0 0 * * *', () => {
-    dailySchedule = generateDailySchedule();
-    const slots = [...dailySchedule].sort();
-    logger.info(
-      { slots, count: dailySchedule.size },
-      'Daily publish schedule regenerated (midnight)'
-    );
-    void sendScheduleEmail(slots, 'midnight');
-  });
+  cronTasks.push(
+    cron.schedule('0 0 * * *', () => {
+      dailySchedule = generateDailySchedule();
+      const slots = [...dailySchedule].sort();
+      logger.info(
+        { slots, count: dailySchedule.size },
+        'Daily publish schedule regenerated (midnight)'
+      );
+      void sendScheduleEmail(slots, 'midnight');
+    })
+  );
 
   // Every minute, check if the current HH:MM matches a scheduled slot
-  cron.schedule('* * * * *', () => {
-    const now = new Date();
-    const hh = now.getHours().toString().padStart(2, '0');
-    const mm = now.getMinutes().toString().padStart(2, '0');
-    const slot = `${hh}:${mm}`;
+  cronTasks.push(
+    cron.schedule('* * * * *', () => {
+      const now = new Date();
+      const hh = now.getHours().toString().padStart(2, '0');
+      const mm = now.getMinutes().toString().padStart(2, '0');
+      const slot = `${hh}:${mm}`;
 
-    if (dailySchedule.has(slot)) {
-      // 85% regular posts, 15% "minimo storico" posts
-      const useLowest = Math.random() < LOWEST_DEAL_PROBABILITY;
-      const variant = useLowest ? 'lowest-deal' : 'regular';
-      logger.info({ slot, variant }, 'Publish slot matched — triggering publish cycle');
+      if (dailySchedule.has(slot)) {
+        // 85% regular posts, 15% "minimo storico" posts
+        const useLowest = Math.random() < LOWEST_DEAL_PROBABILITY;
+        const variant = useLowest ? 'lowest-deal' : 'regular';
+        logger.info({ slot, variant }, 'Publish slot matched — triggering publish cycle');
 
-      void (async () => {
-        try {
-          if (useLowest) {
-            // Try lowest-deal first; fall back to regular if none available
-            const result = await runLowestDealCycle();
-            if (!result) {
-              logger.info({ slot }, 'No lowest-price deals — falling back to regular cycle');
+        void (async () => {
+          try {
+            if (useLowest) {
+              // Try lowest-deal first; fall back to regular if none available
+              const result = await runLowestDealCycle();
+              if (!result) {
+                logger.info({ slot }, 'No lowest-price deals — falling back to regular cycle');
+                await runPublishCycle();
+              }
+            } else {
               await runPublishCycle();
             }
-          } else {
-            await runPublishCycle();
+          } catch (err) {
+            const message = (err as Error).message;
+            logger.error({ err: message, slot, variant }, 'Scheduled publish failed');
+            void sendErrorAlert({
+              errorMessage: `Scheduled publish failed at slot ${slot} (${variant}): ${message}`,
+              errorStack: (err as Error).stack,
+              component: 'ScheduledPublish',
+              severity: 'error',
+              additionalData: { slot, variant },
+            });
           }
+        })();
+      }
+    })
+  );
+
+  // Top 5 daily summary at 19:00
+  cronTasks.push(
+    cron.schedule('0 19 * * *', () => {
+      logger.info('Top 5 daily summary triggered (19:00)');
+      void (async () => {
+        try {
+          await runTop5PublishCycle();
         } catch (err) {
           const message = (err as Error).message;
-          logger.error({ err: message, slot, variant }, 'Scheduled publish failed');
+          logger.error({ err: message }, 'Scheduled top 5 publish failed');
           void sendErrorAlert({
-            errorMessage: `Scheduled publish failed at slot ${slot} (${variant}): ${message}`,
+            errorMessage: `Scheduled top 5 publish failed: ${message}`,
             errorStack: (err as Error).stack,
-            component: 'ScheduledPublish',
+            component: 'ScheduledTop5Publish',
             severity: 'error',
-            additionalData: { slot, variant },
           });
         }
       })();
-    }
-  });
-
-  // Top 5 daily summary at 19:00
-  cron.schedule('0 19 * * *', () => {
-    logger.info('Top 5 daily summary triggered (19:00)');
-    void (async () => {
-      try {
-        await runTop5PublishCycle();
-      } catch (err) {
-        const message = (err as Error).message;
-        logger.error({ err: message }, 'Scheduled top 5 publish failed');
-        void sendErrorAlert({
-          errorMessage: `Scheduled top 5 publish failed: ${message}`,
-          errorStack: (err as Error).stack,
-          component: 'ScheduledTop5Publish',
-          severity: 'error',
-        });
-      }
-    })();
-  });
+    })
+  );
 
   logger.info('Publish scheduler initialized');
 }
@@ -159,4 +167,12 @@ export function getNextScheduledSlot(): string | undefined {
   const next = new Date(now);
   next.setHours(hh, mm, 0, 0);
   return localISOString(next);
+}
+
+export function stopAllCronTasks(): void {
+  for (const task of cronTasks) {
+    task.stop();
+  }
+  cronTasks.length = 0;
+  logger.info('All cron tasks stopped');
 }
