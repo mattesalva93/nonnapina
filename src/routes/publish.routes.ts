@@ -1,6 +1,16 @@
 import { Router } from 'express';
+import {
+  buildLowestPostContent,
+  runLowestDealCycle,
+  selectNextLowestDeal,
+} from '../services/lowest-deal.service.js';
 import { prisma } from '../services/product.service.js';
-import { buildPostContent, runPublishCycle, selectNextDeal } from '../services/publish.service.js';
+import {
+  buildPostContent,
+  computeDealScore,
+  runPublishCycle,
+  selectNextDeal,
+} from '../services/publish.service.js';
 import { getDailySchedule, getNextScheduledSlot } from '../services/scheduler.service.js';
 import {
   buildTop5PostContent,
@@ -131,6 +141,49 @@ publishRouter.post('/top5', async (_req, res, next) => {
       return;
     }
     logger.info({ dealCount: result.dealCount }, 'Manual top 5 publish cycle completed');
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/publish/lowest/preview
+ * Preview the next lowest-price deal that would be selected for publishing.
+ */
+publishRouter.get('/lowest/preview', async (_req, res, next) => {
+  try {
+    const deal = await selectNextLowestDeal();
+    if (!deal) {
+      res.json({
+        message: 'No unpublished lowest-price deals available',
+        deal: null,
+        postPreview: null,
+      });
+      return;
+    }
+
+    const postPreview = buildLowestPostContent(deal);
+    const score = computeDealScore(deal.discount ?? 0, deal.rating ?? 0, deal.reviewCount ?? 0);
+    res.json({ deal, postPreview, score });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/publish/lowest
+ * Manually triggers one lowest-price deal publish cycle.
+ * Returns 200 with the result, or 204 if no deals are available.
+ */
+publishRouter.post('/lowest', async (_req, res, next) => {
+  try {
+    const result = await runLowestDealCycle();
+    if (!result) {
+      res.status(204).end();
+      return;
+    }
+    logger.info({ dealId: result.dealId }, 'Manual lowest-deal publish cycle completed');
     res.json(result);
   } catch (err) {
     next(err);

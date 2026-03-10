@@ -78,17 +78,38 @@ export async function saveProducts(
       reviewCount: product.ratingCount ?? product.keepaReviewCount,
       affiliateWeb: product.affiliateLinks.web,
       affiliateStore: product.affiliateLinks.storefront,
+      isLowest: product.keepaIsLowest,
     };
 
     if (existingDeal) {
+      const priceChanged =
+        existingDeal.price !== (dealData.price ?? null) ||
+        existingDeal.avgPrice !== (dealData.avgPrice ?? null) ||
+        existingDeal.currentPrice !== (dealData.currentPrice ?? null) ||
+        existingDeal.discount !== (dealData.discount ?? null);
+
+      const otherFieldsChanged =
+        existingDeal.category !== dealData.category ||
+        existingDeal.rating !== (dealData.rating ?? null) ||
+        existingDeal.reviewCount !== (dealData.reviewCount ?? null);
+
+      const isLowestChanged = existingDeal.isLowest !== dealData.isLowest;
+
+      if (!priceChanged && !otherFieldsChanged && !isLowestChanged) {
+        logger.debug({ asin: product.asin }, 'Deal unchanged at save time, skipping');
+        continue;
+      }
+
       await prisma.deal.update({
         where: { id: existingDeal.id },
-        data: { ...dealData, scrapeRunId, fetchedAt: new Date() },
+        data: {
+          ...dealData,
+          scrapeRunId,
+          fetchedAt: new Date(),
+          ...(priceChanged && { published: false }),
+        },
       });
-      logger.debug(
-        { asin: product.asin, dealId: existingDeal.id },
-        'Deal updated with latest scrape data'
-      );
+      logger.debug({ asin: product.asin, dealId: existingDeal.id, priceChanged }, 'Deal updated');
     } else {
       await prisma.deal.create({
         data: { asin: product.asin, scrapeRunId, ...dealData },
@@ -98,6 +119,36 @@ export async function saveProducts(
   }
 
   return savedCount;
+}
+
+export interface DealDupCheckResult {
+  status: 'new' | 'updated' | 'unchanged';
+  existingDealId?: string;
+}
+
+export async function checkDealDuplicate(
+  asin: string,
+  keepaData: { avgPrice?: number; currentPrice?: number; discount?: number }
+): Promise<DealDupCheckResult> {
+  const existingDeal = await prisma.deal.findFirst({
+    where: { asin },
+    orderBy: { fetchedAt: 'desc' },
+  });
+
+  if (!existingDeal) {
+    return { status: 'new' };
+  }
+
+  const priceFieldsMatch =
+    existingDeal.avgPrice === (keepaData.avgPrice ?? null) &&
+    existingDeal.currentPrice === (keepaData.currentPrice ?? null) &&
+    existingDeal.discount === (keepaData.discount ?? null);
+
+  if (priceFieldsMatch) {
+    return { status: 'unchanged', existingDealId: existingDeal.id };
+  }
+
+  return { status: 'updated', existingDealId: existingDeal.id };
 }
 
 export interface GetDealsFilters {
@@ -128,6 +179,30 @@ export async function getProducts(filters: { limit?: number; offset?: number } =
     take: limit,
     skip: offset,
   });
+}
+
+export async function markDealsAsLowest(asins: string[]): Promise<number> {
+  if (asins.length === 0) return 0;
+
+  let updatedCount = 0;
+
+  for (const asin of asins) {
+    const existingDeal = await prisma.deal.findFirst({
+      where: { asin },
+      orderBy: { fetchedAt: 'desc' },
+    });
+
+    if (existingDeal && !existingDeal.isLowest) {
+      await prisma.deal.update({
+        where: { id: existingDeal.id },
+        data: { isLowest: true },
+      });
+      updatedCount++;
+      logger.debug({ asin, dealId: existingDeal.id }, 'Marked existing deal as isLowest');
+    }
+  }
+
+  return updatedCount;
 }
 
 export async function getProductByAsin(asin: string) {

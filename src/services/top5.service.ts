@@ -152,9 +152,9 @@ export function buildTop5PostContent(
     lines.push(`💬 ${title}`);
 
     if (originalPrice && discount) {
-      lines.push(`💰 ${price}€ invece di ${originalPrice}€ (-${discount}%)`);
+      lines.push(`💰 Solo ${price}€ invece di ${originalPrice}€ (-${discount}%)`);
     } else {
-      lines.push(`💰 ${price}€`);
+      lines.push(`💰 Solo ${price}€`);
     }
 
     lines.push(`⭐ ${reviews} Recensioni: ${rating} / 5.0`);
@@ -162,6 +162,8 @@ export function buildTop5PostContent(
     lines.push('');
   });
 
+  lines.push('📊 Il prezzo pieno è calcolato sulla media degli ultimi 3 mesi');
+  lines.push('');
   lines.push('🚚 Venduto e spedito da Amazon');
 
   return lines.join('\n');

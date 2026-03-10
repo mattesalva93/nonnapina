@@ -43,6 +43,7 @@ model Deal {
   reviewCount    Int?
   affiliateWeb   String?
   affiliateStore String?
+  isLowest       Boolean  @default(false)
   published      Boolean  @default(false)
   fetchedAt      DateTime @default(now())
   scrapeRunId    String

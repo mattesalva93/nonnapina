@@ -1,6 +1,7 @@
 import { Router } from 'express';
+import path from 'node:path';
 import { config } from '../config/index.js';
-import { scrapeKeepaDeals } from '../scrapers/keepa.js';
+import { getLatestScreenshots, scrapeKeepaDeals } from '../scrapers/keepa.js';
 import { amazonService } from '../services/amazon.js';
 import { sendErrorAlert } from '../services/email.service.js';
 import {
@@ -9,10 +10,11 @@ import {
   getActiveRun,
   getScrapeRunById,
   getScrapeRuns,
+  markDealsAsLowest,
   saveProducts,
   startScrapeRun,
 } from '../services/product.service.js';
-import type { EnrichedProduct, KeepaProduct } from '../types/index.js';
+import type { EnrichedProduct } from '../types/index.js';
 import { createComponentLogger } from '../utils/logger.js';
 
 const logger = createComponentLogger('ScrapeRoutes');
@@ -92,7 +94,7 @@ export async function runScrapeJob(scrapeRunId: string): Promise<void> {
 
   try {
     // Step 1: Scrape Keepa
-    const keepaProducts: KeepaProduct[] = await scrapeKeepaDeals();
+    const { products: keepaProducts, lowestAsins } = await scrapeKeepaDeals();
     logger.info({ count: keepaProducts.length }, 'Keepa scraping complete');
 
     if (keepaProducts.length === 0) {
@@ -118,11 +120,25 @@ export async function runScrapeJob(scrapeRunId: string): Promise<void> {
         keepaCurrentPrice: keepa?.currentPrice,
         keepaRating: keepa?.rating,
         keepaReviewCount: keepa?.reviewCount,
+        keepaIsLowest: keepa?.isLowest ?? false,
       };
     });
 
     // Step 4: Persist to database
     const savedCount = await saveProducts(enriched, scrapeRunId);
+
+    // Step 5: Mark deals as lowest for ASINs found in Pass 2 but not in Pass 1
+    const pass1Asins = new Set(keepaProducts.map(p => p.asin));
+    const dbOnlyLowestAsins = [...lowestAsins].filter(asin => !pass1Asins.has(asin));
+    const markedCount = await markDealsAsLowest(dbOnlyLowestAsins);
+
+    if (markedCount > 0) {
+      logger.info(
+        { markedCount, dbOnlyLowestAsins: dbOnlyLowestAsins.length },
+        'Marked existing DB deals as isLowest from Pass 2'
+      );
+    }
+
     await completeScrapeRun(scrapeRunId, savedCount);
 
     logger.info(
@@ -133,12 +149,17 @@ export async function runScrapeJob(scrapeRunId: string): Promise<void> {
     const message = err instanceof Error ? err.message : String(err);
     await failScrapeRun(scrapeRunId, message);
     logger.error({ scrapeRunId, error: message }, 'Scrape job failed');
+    const screenshots = await getLatestScreenshots(4);
     void sendErrorAlert({
       errorMessage: `Scrape job failed: ${message}`,
       errorStack: err instanceof Error ? err.stack : undefined,
       component: 'ScrapeJob',
       severity: 'critical',
       scrapeRunId,
+      attachments: screenshots.map(filepath => ({
+        filename: path.basename(filepath),
+        path: path.resolve(filepath),
+      })),
     });
     throw err;
   }

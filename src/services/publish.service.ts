@@ -103,9 +103,10 @@ export function buildPostContent(deal: {
 
   // Price line
   if (originalPrice && discount) {
-    lines.push(`💰 A soli ${price}€ invece di ${originalPrice}€ (-${discount}%)`);
+    lines.push(`💰 Solo ${price}€ invece di ${originalPrice}€ (-${discount}%)`);
+    lines.push('📊 Il prezzo pieno è calcolato sulla media degli ultimi 3 mesi');
   } else {
-    lines.push(`💰 A soli ${price}€`);
+    lines.push(`💰 Solo ${price}€`);
   }
   lines.push('');
 

@@ -120,12 +120,12 @@ describe('buildTop5PostContent', () => {
 
   it('shows discount price line when discount info is available', () => {
     const content = buildTop5PostContent(mockDeals);
-    expect(content).toContain('19,99€ invece di 39,99€ (-50%)');
+    expect(content).toContain('Solo 19,99€ invece di 39,99€ (-50%)');
   });
 
   it('shows simple price line when no discount info', () => {
     const content = buildTop5PostContent(mockDeals);
-    expect(content).toContain('59,99€');
+    expect(content).toContain('Solo 59,99€');
     // Should not contain "invece di" for the second deal
     const lines = content.split('\n');
     const priceLine2 = lines.find(l => l.includes('59,99€'));
@@ -150,6 +150,18 @@ describe('buildTop5PostContent', () => {
     expect(content).toContain('80 Recensioni: 4.2 / 5.0');
   });
 
+  it('includes average price disclaimer exactly once before Amazon shipping', () => {
+    const content = buildTop5PostContent(mockDeals);
+    const disclaimerMatches = content.match(
+      /Il prezzo pieno è calcolato sulla media degli ultimi 3 mesi/g
+    );
+    expect(disclaimerMatches).toHaveLength(1);
+    // Disclaimer must come before shipping notice
+    const disclaimerIdx = content.indexOf('Il prezzo pieno è calcolato');
+    const shippingIdx = content.indexOf('Venduto e spedito da Amazon');
+    expect(disclaimerIdx).toBeLessThan(shippingIdx);
+  });
+
   it('includes Amazon shipping notice exactly once at the bottom', () => {
     const content = buildTop5PostContent(mockDeals);
     const matches = content.match(/Venduto e spedito da Amazon/g);
@@ -160,6 +172,7 @@ describe('buildTop5PostContent', () => {
   it('handles empty deals array', () => {
     const content = buildTop5PostContent([]);
     expect(content).toContain('TOP 5 OFFERTE DEL GIORNO');
+    expect(content).toContain('Il prezzo pieno è calcolato sulla media degli ultimi 3 mesi');
     expect(content).toContain('Venduto e spedito da Amazon');
   });
 });

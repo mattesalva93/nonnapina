@@ -1,7 +1,8 @@
 import cron from 'node-cron';
 import { localISOString } from '../utils/date.js';
 import { createComponentLogger } from '../utils/logger.js';
-import { sendErrorAlert } from './email.service.js';
+import { sendErrorAlert, sendScheduleEmail } from './email.service.js';
+import { runLowestDealCycle } from './lowest-deal.service.js';
 import { runPublishCycle } from './publish.service.js';
 import { runTop5PublishCycle } from './top5.service.js';
 
@@ -13,6 +14,9 @@ const PUBLISH_START_HOUR = 6;
 const PUBLISH_END_HOUR = 22;
 const MIN_POSTS_PER_HOUR = 2;
 const MAX_POSTS_PER_HOUR = 4;
+
+// Probability of picking the "minimo storico" variant over the regular post
+const LOWEST_DEAL_PROBABILITY = 0.15;
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let dailySchedule: Set<string> = new Set();
@@ -49,18 +53,22 @@ export function generateDailySchedule(): Set<string> {
 
 export function initPublishScheduler(): void {
   dailySchedule = generateDailySchedule();
+  const sortedSlots = [...dailySchedule].sort();
   logger.info(
-    { slots: [...dailySchedule].sort(), count: dailySchedule.size },
+    { slots: sortedSlots, count: dailySchedule.size },
     'Daily publish schedule generated'
   );
+  void sendScheduleEmail(sortedSlots, 'startup');
 
   // Regenerate at midnight for the new day
   cron.schedule('0 0 * * *', () => {
     dailySchedule = generateDailySchedule();
+    const slots = [...dailySchedule].sort();
     logger.info(
-      { slots: [...dailySchedule].sort(), count: dailySchedule.size },
+      { slots, count: dailySchedule.size },
       'Daily publish schedule regenerated (midnight)'
     );
+    void sendScheduleEmail(slots, 'midnight');
   });
 
   // Every minute, check if the current HH:MM matches a scheduled slot
@@ -71,19 +79,32 @@ export function initPublishScheduler(): void {
     const slot = `${hh}:${mm}`;
 
     if (dailySchedule.has(slot)) {
-      logger.info({ slot }, 'Publish slot matched — triggering publish cycle');
+      // 85% regular posts, 15% "minimo storico" posts
+      const useLowest = Math.random() < LOWEST_DEAL_PROBABILITY;
+      const variant = useLowest ? 'lowest-deal' : 'regular';
+      logger.info({ slot, variant }, 'Publish slot matched — triggering publish cycle');
+
       void (async () => {
         try {
-          await runPublishCycle();
+          if (useLowest) {
+            // Try lowest-deal first; fall back to regular if none available
+            const result = await runLowestDealCycle();
+            if (!result) {
+              logger.info({ slot }, 'No lowest-price deals — falling back to regular cycle');
+              await runPublishCycle();
+            }
+          } else {
+            await runPublishCycle();
+          }
         } catch (err) {
           const message = (err as Error).message;
-          logger.error({ err: message, slot }, 'Scheduled publish failed');
+          logger.error({ err: message, slot, variant }, 'Scheduled publish failed');
           void sendErrorAlert({
-            errorMessage: `Scheduled publish failed at slot ${slot}: ${message}`,
+            errorMessage: `Scheduled publish failed at slot ${slot} (${variant}): ${message}`,
             errorStack: (err as Error).stack,
             component: 'ScheduledPublish',
             severity: 'error',
-            additionalData: { slot },
+            additionalData: { slot, variant },
           });
         }
       })();

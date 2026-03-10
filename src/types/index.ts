@@ -8,6 +8,12 @@ export interface KeepaProduct {
   currentPrice: number | undefined;
   rating: number | undefined;
   reviewCount: number | undefined;
+  isLowest: boolean;
+}
+
+export interface ScrapeResult {
+  products: KeepaProduct[];
+  lowestAsins: Set<string>;
 }
 
 export interface AffiliateLinks {
@@ -58,6 +64,7 @@ export interface EnrichedProduct extends AmazonProduct {
   keepaCurrentPrice: number | undefined;
   keepaRating: number | undefined;
   keepaReviewCount: number | undefined;
+  keepaIsLowest: boolean;
 }
 
 export interface LinkOptions {

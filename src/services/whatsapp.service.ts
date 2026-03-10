@@ -1,5 +1,7 @@
 import type { Channel, Client as ClientType } from 'whatsapp-web.js';
 import pkg from 'whatsapp-web.js';
+import fs from 'node:fs';
+import path from 'node:path';
 import { config } from '../config/index.js';
 import { createComponentLogger } from '../utils/logger.js';
 
@@ -21,11 +23,58 @@ export function getWhatsAppStatus(): { status: WhatsAppStatus; qr: string | unde
   return { status: 'disconnected', qr: undefined };
 }
 
+// ─── Stale lock file cleanup ─────────────────────────────────────────────────
+// When the container stops abruptly, Chromium leaves lock files (SingletonLock,
+// SingletonCookie, SingletonSocket) in the user-data directory. These cause
+// "already running" errors on the next start. We clean them before init.
+
+const CHROMIUM_LOCK_FILES = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+
+function cleanupStaleLocks(sessionDataPath: string): void {
+  try {
+    // LocalAuth stores session under <dataPath>/session-<clientId>/Default/
+    // Walk the session directory tree looking for lock files
+    if (!fs.existsSync(sessionDataPath)) return;
+
+    const walk = (dir: string) => {
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(fullPath);
+        } else if (CHROMIUM_LOCK_FILES.includes(entry.name)) {
+          try {
+            fs.unlinkSync(fullPath);
+            logger.info({ file: fullPath }, 'Removed stale Chromium lock file');
+          } catch (err) {
+            logger.warn(
+              { file: fullPath, error: (err as Error).message },
+              'Failed to remove lock file'
+            );
+          }
+        }
+      }
+    };
+
+    walk(sessionDataPath);
+  } catch (err) {
+    logger.warn({ error: (err as Error).message }, 'Lock file cleanup failed');
+  }
+}
+
 // ─── Initialization ──────────────────────────────────────────────────────────
 
 export async function initWhatsApp(): Promise<void> {
   if (isInitializing || isReady) return;
   isInitializing = true;
+
+  // Clean stale Chromium lock files from previous container lifecycle
+  cleanupStaleLocks(config.whatsapp.sessionDataPath);
 
   const chromiumPath = process.env.CHROMIUM_PATH;
 
@@ -64,7 +113,24 @@ export async function initWhatsApp(): Promise<void> {
   client.on('auth_failure', (msg: string) => {
     isReady = false;
     isInitializing = false;
-    logger.error({ error: msg }, 'WhatsApp authentication failed');
+    logger.error({ error: msg }, 'WhatsApp authentication failed — cleaning session and retrying');
+
+    // Clear the session data so the next init gets a fresh QR code
+    const sessionPath = config.whatsapp.sessionDataPath;
+    try {
+      if (fs.existsSync(sessionPath)) {
+        fs.rmSync(sessionPath, { recursive: true, force: true });
+        logger.info({ path: sessionPath }, 'Cleared stale WhatsApp session data');
+      }
+    } catch (err) {
+      logger.warn({ error: (err as Error).message }, 'Failed to clear session data');
+    }
+
+    // Retry initialization after a short delay
+    client = undefined;
+    setTimeout(() => {
+      void initWhatsApp();
+    }, 5000);
   });
 
   client.on('disconnected', (reason: string) => {

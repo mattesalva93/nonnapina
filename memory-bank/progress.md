@@ -44,5 +44,27 @@
 
 ## Known Issues
 
-- Orphan container `keepa-tracker` from a previous docker run (can be removed with `docker compose down --remove-orphans`)
+- WhatsApp client Chromium profile lock (non-critical, pre-existing)
 - No CI/CD pipeline
+
+## Post-v1.0.0 Enhancements
+
+### TASK003 — Keepa Filter Modifications ✅ COMPLETE
+
+- Updated Keepa scraper filters (date range, price variation, reviews, adult content, single variant)
+
+### TASK004 — Per-Product Dedup ✅ COMPLETE
+
+- Added `checkDealDuplicate()` to skip unchanged products during scraping (25/25 tests)
+
+### TASK005 — Amazon API Deals Research ✅ COMPLETE
+
+- Researched PA-API / Creators API for deal discovery — no browse-deals endpoint exists
+
+### TASK006 — Two-Pass "Minimo" (isLowest) Scraping ✅ COMPLETE
+
+- Added `isLowest` Boolean field to Deal model (Prisma migration applied)
+- Extracted `scrapeAllCategories()` function for reuse across passes
+- Pass 1: normal scraping; Pass 2: enables "minimo" filter and re-scrapes
+- Merge: products in both passes get `isLowest=true`; pass2-only added with `isLowest=true`
+- First run: 145 deals (112 isLowest=true, 33 isLowest=false)

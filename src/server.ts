@@ -137,35 +137,6 @@ const { port } = config.server;
 
 app.listen(port, () => {
   logger.info({ port, env: config.server.nodeEnv }, `Server running on port ${port}`);
-
-  if (config.server.nodeEnv !== 'test') {
-    // Fire an initial scrape right after boot so the DB is always populated
-    void (async () => {
-      try {
-        const activeRun = await getActiveRun();
-        if (activeRun) {
-          logger.warn(
-            { scrapeRunId: activeRun.id },
-            'Initial scrape skipped — a job is already running'
-          );
-          return;
-        }
-        logger.info('Running initial scrape on startup...');
-        const run = await startScrapeRun();
-        await runScrapeJob(run.id);
-        logger.info({ scrapeRunId: run.id }, 'Initial scrape completed');
-      } catch (err) {
-        const message = (err as Error).message;
-        logger.error({ err: message }, 'Initial scrape failed');
-        void sendErrorAlert({
-          errorMessage: `Initial scrape failed: ${message}`,
-          errorStack: (err as Error).stack,
-          component: 'InitialScrape',
-          severity: 'critical',
-        });
-      }
-    })();
-  }
 });
 
 export { app };
