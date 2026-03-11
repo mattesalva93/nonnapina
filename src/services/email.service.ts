@@ -1,7 +1,11 @@
+import { createRequire } from 'node:module';
 import type { Transporter } from 'nodemailer';
 import nodemailer from 'nodemailer';
 import { config } from '../config/index.js';
-import { localISOString } from '../utils/date.js';
+import { italianDateTime } from '../utils/date.js';
+
+const require = createRequire(import.meta.url);
+const { version: APP_VERSION } = require('../../package.json') as { version: string };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -47,7 +51,7 @@ function isEmailAlertEnabled(): boolean {
 // ─── HTML template ────────────────────────────────────────────────────────────
 
 function buildAlertHtml(payload: ErrorAlertPayload): string {
-  const timestamp = localISOString();
+  const timestamp = italianDateTime();
   const rows: Array<[string, string]> = [
     ['Timestamp', timestamp],
     ['Environment', config.server.nodeEnv],
@@ -99,7 +103,7 @@ function buildAlertHtml(payload: ErrorAlertPayload): string {
       ${stackSection}
     </div>
     <div style="padding:16px 24px;background:#f8f9fa;border-top:1px solid #eee;font-size:12px;color:#888;text-align:center;">
-      Nonna Pina v${process.env.npm_package_version ?? '0.1.0'} &middot; ${timestamp}
+      Nonna Pina v${APP_VERSION} &middot; ${timestamp}
     </div>
   </div>
 </body>
@@ -161,7 +165,7 @@ export async function sendErrorAlert(payload: ErrorAlertPayload): Promise<boolea
 // ─── Daily schedule notification ──────────────────────────────────────────────
 
 function buildScheduleHtml(slots: string[], trigger: string): string {
-  const timestamp = localISOString();
+  const timestamp = italianDateTime();
   const today = new Date().toLocaleDateString('it-IT', {
     weekday: 'long',
     year: 'numeric',
@@ -219,7 +223,7 @@ function buildScheduleHtml(slots: string[], trigger: string): string {
       </p>
     </div>
     <div style="padding:16px 24px;background:#f8f9fa;border-top:1px solid #eee;font-size:12px;color:#888;text-align:center;">
-      Nonna Pina v${process.env.npm_package_version ?? '0.1.0'} &middot; ${timestamp}
+      Nonna Pina v${APP_VERSION} &middot; ${timestamp}
     </div>
   </div>
 </body>
@@ -268,7 +272,7 @@ interface MissingCategory {
 }
 
 function buildMissingCategoriesHtml(categories: MissingCategory[]): string {
-  const timestamp = localISOString();
+  const timestamp = italianDateTime();
 
   const categoryRows = categories
     .sort((a, b) => b.count - a.count)
@@ -308,7 +312,7 @@ function buildMissingCategoriesHtml(categories: MissingCategory[]): string {
       </table>
     </div>
     <div style="padding:16px 24px;background:#f8f9fa;border-top:1px solid #eee;font-size:12px;color:#888;text-align:center;">
-      Nonna Pina v${process.env.npm_package_version ?? '0.1.0'} &middot; ${timestamp}
+      Nonna Pina v${APP_VERSION} &middot; ${timestamp}
     </div>
   </div>
 </body>

@@ -20,3 +20,18 @@ export function localISOString(date: Date = new Date()): string {
     `.${pad(date.getMilliseconds(), 3)}${sign}${hh}:${mm}`
   );
 }
+
+/**
+ * Returns a human-readable Italian date+time string.
+ * Example: "11 marzo 2026, 18:23"
+ */
+export function italianDateTime(date: Date = new Date()): string {
+  return date.toLocaleString('it-IT', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Europe/Rome',
+  });
+}

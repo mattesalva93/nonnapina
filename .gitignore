@@ -52,3 +52,5 @@ playwright/.cache/
 # ─── SSH VPS ────────────────────────────────────────────
 nonnapina_deploy
 nonnapina_deploy.pub
+
+PROD_COMMANDS.md

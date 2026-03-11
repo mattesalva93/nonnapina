@@ -116,7 +116,7 @@ async function recoverDealsPage(
   logger.info('Launching fresh browser for recovery');
 
   const { browser: newBrowser, page: newPage } = await connect({
-    headless: true,
+    headless: false,
     args: [
       '--no-first-run',
       '--no-default-browser-check',
@@ -1134,7 +1134,7 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
 
   try {
     const { browser: realBrowser, page: realPage } = await connect({
-      headless: true,
+      headless: false,
       args: [
         '--no-first-run',
         '--no-default-browser-check',
