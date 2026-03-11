@@ -1,5 +1,5 @@
 ---
-description: 'Evolution roadmap and architectural context for the Keepa Tracker project transition from CLI scripts to a Dockerized Express/Prisma server application with PostgreSQL persistence.'
+description: 'Evolution roadmap and architectural context for the Nonna Pina project transition from CLI scripts to a Dockerized Express/Prisma server application with PostgreSQL persistence.'
 applyTo: '**'
 ---
 

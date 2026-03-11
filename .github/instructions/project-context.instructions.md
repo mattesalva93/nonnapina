@@ -1,13 +1,13 @@
 ---
-description: 'General project context and conventions for the Keepa Tracker codebase. Apply to all files to ensure consistent patterns, naming, and architecture decisions.'
+description: 'General project context and conventions for the Nonna Pina codebase. Apply to all files to ensure consistent patterns, naming, and architecture decisions.'
 applyTo: '**'
 ---
 
-# Keepa Tracker — Project Context
+# Nonna Pina — Project Context
 
 ## What This Project Is
 
-Keepa Tracker is a Node.js application that automates Amazon affiliate deal discovery by scraping the Keepa website and enriching products via the Amazon Creators API. It is currently a CLI-based pipeline (v0.0.4) being transitioned to a Dockerized Express/Prisma/PostgreSQL server application.
+Nonna Pina is a Node.js application that automates Amazon affiliate deal discovery by scraping deal aggregator websites and enriching products via the Amazon Creators API. It is currently being transitioned to a Dockerized Express/Prisma/PostgreSQL server application.
 
 ## Current Architecture (v0.0.4)
 

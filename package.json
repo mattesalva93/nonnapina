@@ -1,7 +1,7 @@
 {
-  "name": "keepa-tracker",
+  "name": "nonnapina-prod",
   "version": "0.1.0",
-  "description": "Keepa deals scraper with Amazon affiliate link generator",
+  "description": "Amazon affiliate deal discovery and publishing service",
   "main": "dist/server.js",
   "type": "module",
   "scripts": {
@@ -16,10 +16,9 @@
     "clean": "rm -rf dist/"
   },
   "keywords": [
-    "keepa",
     "amazon",
     "affiliate",
-    "scraper"
+    "deals"
   ],
   "author": "",
   "license": "ISC",

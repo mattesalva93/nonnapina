@@ -1,4 +1,4 @@
-// Shared domain types for the Keepa Tracker application
+// Shared domain types for the application
 
 export interface KeepaProduct {
   asin: string;

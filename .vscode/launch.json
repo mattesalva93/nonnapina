@@ -4,7 +4,7 @@
     {
       "type": "node",
       "request": "launch",
-      "name": "🚀 Run Keepa Tracker",
+      "name": "🚀 Run Nonna Pina",
       "skipFiles": ["<node_internals>/**"],
       "program": "${workspaceFolder}/src/index.js",
       "console": "integratedTerminal",
@@ -16,7 +16,7 @@
     {
       "type": "node",
       "request": "launch",
-      "name": "🧪 Test Keepa Scraper Only",
+      "name": "🧪 Test Scraper Only",
       "skipFiles": ["<node_internals>/**"],
       "program": "${workspaceFolder}/src/scrapers/keepa.js",
       "console": "integratedTerminal",

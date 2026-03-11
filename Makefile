@@ -1,4 +1,4 @@
-# ─── Keepa Tracker — Docker Operations ────────────────────────────────────────
+# ─── Nonna Pina — Docker Operations ───────────────────────────────────────────
 # Usage:  make <target>
 # Run `make help` for a list of all available commands.
 
@@ -16,7 +16,7 @@ DB      := postgres
 
 help: ## Show this help
 	@echo ""
-	@echo "  Keepa Tracker — Docker commands"
+	@echo "  Nonna Pina — Docker commands"
 	@echo "  ────────────────────────────────"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -63,7 +63,7 @@ shell: ## Open a shell inside the app container
 	$(COMPOSE) exec $(APP) sh
 
 db-shell: ## Open psql inside the database container
-	$(COMPOSE) exec $(DB) psql -U npadmin -d nonnapina
+	$(COMPOSE) exec $(DB) psql -U npadmin -d nonnapina_prod
 
 # ─── Cleanup ───────────────────────────────────────────────────────────────────
 

@@ -1,11 +1,11 @@
-# Keepa Tracker
+# Nonna Pina
 
-Keepa Tracker automates Amazon affiliate deal discovery by scraping the [Keepa](https://keepa.com) website and enriching products via the Amazon Creators API. Scraped data is persisted in PostgreSQL and exposed through a REST API. Deals are automatically published to Telegram and WhatsApp channels on a randomised daily schedule.
+Nonna Pina automates Amazon affiliate deal discovery by scraping deal aggregators and enriching products via the Amazon Creators API. Scraped data is persisted in PostgreSQL and exposed through a REST API. Deals are automatically published to Telegram and WhatsApp channels on a randomised daily schedule.
 
 ## Architecture
 
 ```
-Keepa (scrape) → Amazon Creators API (enrich) → PostgreSQL (Prisma)
+Deal aggregator (scrape) → Amazon Creators API (enrich) → PostgreSQL (Prisma)
                                                        ↓
                                                REST API (Express)
                                                        ↓
@@ -22,7 +22,7 @@ Keepa (scrape) → Amazon Creators API (enrich) → PostgreSQL (Prisma)
 
 ```bash
 # 1. Clone the repository
-git clone <repo-url> && cd keepa-tracker
+git clone <repo-url> && cd nonnapina-prod
 
 # 2. Copy the environment file and fill in your values
 cp .env.example .env
@@ -50,7 +50,7 @@ Copy `.env.example` to `.env` and fill in each section. All variables are docume
 | `LOG_LEVEL`         | No       | `debug` (dev) / `info` (prod) | Pino log level (`trace`, `debug`, `info`, `warn`, `error`)         |
 | `DATABASE_URL`      | Yes      | —                             | PostgreSQL connection string (set automatically by Docker Compose) |
 | `POSTGRES_PASSWORD` | Yes      | —                             | PostgreSQL password (used by Docker Compose)                       |
-| `SCRAPE_CRON`       | No       | `15 8,20 * * *`               | Cron schedule for automatic Keepa scraping                         |
+| `SCRAPE_CRON`       | No       | `15 8,20 * * *`               | Cron schedule for automatic deal scraping                          |
 
 ### Amazon Creators API
 
@@ -68,15 +68,15 @@ To obtain Amazon Creators API credentials:
 2. Request Creators API access from the affiliate dashboard
 3. Copy the Client ID, Client Secret and Partner Tag to your `.env`
 
-### Keepa scraper
+### Deal scraper
 
 | Variable                    | Required | Default | Description                           |
 | --------------------------- | -------- | ------- | ------------------------------------- |
-| `KEEPA_CATEGORIES`          | No       | `5`     | Comma-separated Keepa category IDs    |
+| `KEEPA_CATEGORIES`          | No       | `5`     | Comma-separated deal category IDs     |
 | `MAX_PRODUCTS_PER_CATEGORY` | No       | `10`    | Max products to fetch per category    |
 | `SCRAPING_DELAY_MS`         | No       | `2000`  | Delay between category requests in ms |
 
-**Keepa category IDs (Amazon.it)**
+**Category IDs (Amazon.it)**
 
 | ID  | Category                           |
 | --- | ---------------------------------- |
@@ -109,7 +109,7 @@ To obtain Amazon Creators API credentials:
 | 27  | Videogiochi                        |
 | 28  | Amazon Luxury                      |
 
-New categories found on Keepa that are not yet mapped are automatically saved to `output/missing-categories.json`.
+New categories that are not yet mapped are automatically saved to `output/missing-categories.json`.
 
 ### Publishing channels
 
@@ -306,7 +306,7 @@ Query parameters:
 
 ### Scraping
 
-The Keepa scraper runs on the schedule defined by `SCRAPE_CRON` (default: 08:15 and 20:15 daily). An initial scrape also runs at server startup to populate the database. If a scrape is already running, the scheduled or initial scrape is skipped.
+The deal scraper runs on the schedule defined by `SCRAPE_CRON` (default: 08:15 and 20:15 daily). An initial scrape also runs at server startup to populate the database. If a scrape is already running, the scheduled or initial scrape is skipped.
 
 ### Publishing
 
@@ -386,7 +386,7 @@ src/
     publish.routes.ts    → /api/publish — publishing and preview
     whatsapp.routes.ts   → /api/whatsapp — WhatsApp status and QR
   scrapers/
-    keepa.ts             → Puppeteer-based Keepa deal scraper
+    keepa.ts             → Puppeteer-based deal scraper
   services/
     amazon.ts            → Amazon Creators API client (OAuth 2.0)
     product.service.ts   → Database persistence (Prisma)
@@ -458,7 +458,7 @@ make db-shell
 - If the session expires, delete the WhatsApp session volume and re-authenticate:
   ```bash
   docker compose down
-  docker volume rm nonnapina_whatsapp_session
+  docker volume rm nonnapina-prod_whatsapp_session
   docker compose up -d
   ```
 

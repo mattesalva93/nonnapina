@@ -89,7 +89,7 @@ function buildAlertHtml(payload: ErrorAlertPayload): string {
 <body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,sans-serif;background-color:#f4f4f7;color:#333;">
   <div style="max-width:640px;margin:20px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
     <div style="background-color:${severityColor(payload.severity)};padding:20px 24px;">
-      <h1 style="margin:0;color:#fff;font-size:20px;">Keepa Tracker — Error Alert</h1>
+      <h1 style="margin:0;color:#fff;font-size:20px;">Nonna Pina — Error Alert</h1>
       <p style="margin:6px 0 0;color:rgba(255,255,255,0.9);font-size:14px;">${escapeHtml(payload.severity.toUpperCase())} in ${escapeHtml(payload.component)}</p>
     </div>
     <div style="padding:24px;">
@@ -99,7 +99,7 @@ function buildAlertHtml(payload: ErrorAlertPayload): string {
       ${stackSection}
     </div>
     <div style="padding:16px 24px;background:#f8f9fa;border-top:1px solid #eee;font-size:12px;color:#888;text-align:center;">
-      Keepa Tracker v${process.env.npm_package_version ?? '0.1.0'} &middot; ${timestamp}
+      Nonna Pina v${process.env.npm_package_version ?? '0.1.0'} &middot; ${timestamp}
     </div>
   </div>
 </body>
@@ -182,7 +182,7 @@ function buildScheduleHtml(slots: string[], trigger: string): string {
 <body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,sans-serif;background-color:#f4f4f7;color:#333;">
   <div style="max-width:640px;margin:20px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
     <div style="background-color:#2c3e50;padding:20px 24px;">
-      <h1 style="margin:0;color:#fff;font-size:20px;">Keepa Tracker — Programma Pubblicazioni</h1>
+      <h1 style="margin:0;color:#fff;font-size:20px;">Nonna Pina — Programma Pubblicazioni</h1>
       <p style="margin:6px 0 0;color:rgba(255,255,255,0.9);font-size:14px;">${escapeHtml(today)}</p>
     </div>
     <div style="padding:24px;">
@@ -219,7 +219,7 @@ function buildScheduleHtml(slots: string[], trigger: string): string {
       </p>
     </div>
     <div style="padding:16px 24px;background:#f8f9fa;border-top:1px solid #eee;font-size:12px;color:#888;text-align:center;">
-      Keepa Tracker v${process.env.npm_package_version ?? '0.1.0'} &middot; ${timestamp}
+      Nonna Pina v${process.env.npm_package_version ?? '0.1.0'} &middot; ${timestamp}
     </div>
   </div>
 </body>
