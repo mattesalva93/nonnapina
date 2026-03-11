@@ -22,10 +22,12 @@ RUN npm run build
 # ─── Stage 2: Production runner ──────────────────────────────────────────────
 FROM node:22-bookworm-slim AS runner
 
-# Install Chromium and required system libraries for puppeteer-real-browser
-# Using --no-install-recommends keeps the layer small
+# Install Chromium, Xvfb and required system libraries for puppeteer-real-browser
+# Xvfb provides a virtual display so the browser runs in "headed" mode,
+# which is essential for bypassing Cloudflare/Turnstile bot detection.
 RUN apt-get update && apt-get install -y \
     chromium \
+    xvfb \
     --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 

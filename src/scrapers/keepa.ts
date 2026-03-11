@@ -131,7 +131,7 @@ async function recoverDealsPage(
     customConfig: {},
     turnstile: true,
     connectOption: { defaultViewport: undefined },
-    disableXvfb: true,
+    disableXvfb: false,
     ignoreAllFlags: false,
   });
 
@@ -1151,7 +1151,7 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       connectOption: {
         defaultViewport: undefined,
       },
-      disableXvfb: true,
+      disableXvfb: false,
       ignoreAllFlags: false,
     });
 
