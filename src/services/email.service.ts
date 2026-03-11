@@ -219,7 +219,7 @@ function buildScheduleHtml(slots: string[], trigger: string): string {
       </table>
 
       <p style="margin-top:16px;font-size:12px;color:#888;">
-        Ogni slot ha ~85% probabilit&agrave; di pubblicare un post classico e ~15% un post "minimo storico".
+        Ogni slot ha ~80% probabilit&agrave; di pubblicare un post classico e ~20% un post "minimo storico".
       </p>
     </div>
     <div style="padding:16px 24px;background:#f8f9fa;border-top:1px solid #eee;font-size:12px;color:#888;text-align:center;">

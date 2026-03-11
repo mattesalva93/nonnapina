@@ -54,7 +54,7 @@ services:
       - output_data:/app/output
       - whatsapp_session:/app/.wwebjs_auth
     read_only: true
-    shm_size: '512m'
+    shm_size: '1g'
     tmpfs:
       - /tmp:size=256M
       - /home/appuser:size=128M,uid=1001,gid=1001

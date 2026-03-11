@@ -14,8 +14,10 @@ const logger = createComponentLogger('KeepaService');
 
 const SCREENSHOT_DIR = './output/screenshots';
 let screenshotCounter = 0;
+const SCREENSHOTS_ENABLED = config.server.nodeEnv !== 'production';
 
 async function takeScreenshot(page: Page, label: string): Promise<void> {
+  if (!SCREENSHOTS_ENABLED) return;
   try {
     await fs.mkdir(SCREENSHOT_DIR, { recursive: true });
     const idx = String(++screenshotCounter).padStart(3, '0');
@@ -127,10 +129,11 @@ async function recoverDealsPage(
       '--disable-crash-reporter',
       '--disable-dev-shm-usage',
       '--disable-gpu',
+      '--disable-software-rasterizer',
     ],
     customConfig: {},
     turnstile: true,
-    connectOption: { defaultViewport: undefined },
+    connectOption: { defaultViewport: undefined, protocolTimeout: 60_000 },
     disableXvfb: false,
     ignoreAllFlags: false,
   });
@@ -1145,11 +1148,13 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
         '--disable-crash-reporter',
         '--disable-dev-shm-usage',
         '--disable-gpu',
+        '--disable-software-rasterizer',
       ],
       customConfig: {},
       turnstile: true,
       connectOption: {
         defaultViewport: undefined,
+        protocolTimeout: 60_000,
       },
       disableXvfb: false,
       ignoreAllFlags: false,
