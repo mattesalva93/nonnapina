@@ -63,7 +63,7 @@ shell: ## Open a shell inside the app container
 	$(COMPOSE) exec $(APP) sh
 
 db-shell: ## Open psql inside the database container
-	$(COMPOSE) exec $(DB) psql -U npadmin -d nonnapina_prod
+	$(COMPOSE) exec $(DB) psql -U npadmin -d nonnapina_staging
 
 # ─── Cleanup ───────────────────────────────────────────────────────────────────
 
@@ -95,25 +95,28 @@ migrate-status: ## Show migration status
 	$(COMPOSE) exec $(APP) npx prisma migrate status
 
 # ─── Production (VPS) ─────────────────────────────────────────────────────────
-# These targets assume .env.production exists with all production secrets.
+# These targets use docker-compose.prod.yml with .env.production secrets.
 
-PROD_ENV := --env-file .env.production
+PROD_COMPOSE := $(COMPOSE) -f docker-compose.prod.yml --env-file .env.production
 
-prod: ## 🚀 Production deploy: build + start with .env.production
-	$(COMPOSE) $(PROD_ENV) up --build -d
+prod: ## 🚀 Production deploy: pull + start with .env.production
+	$(PROD_COMPOSE) up -d
 
-prod-restart: ## 🔄 Production restart (rebuild + restart)
-	$(COMPOSE) $(PROD_ENV) down
-	$(COMPOSE) $(PROD_ENV) up --build -d
+prod-restart: ## 🔄 Production restart
+	$(PROD_COMPOSE) down
+	$(PROD_COMPOSE) up -d
 
 prod-logs: ## 📋 Follow production app logs
-	$(COMPOSE) $(PROD_ENV) logs -f $(APP)
+	$(PROD_COMPOSE) logs -f $(APP)
 
 prod-stop: ## ⏹  Stop production containers
-	$(COMPOSE) $(PROD_ENV) down
+	$(PROD_COMPOSE) down
 
 prod-status: ## 📊 Show production container status
-	$(COMPOSE) $(PROD_ENV) ps -a
+	$(PROD_COMPOSE) ps -a
+
+prod-db-shell: ## Open psql inside the production database
+	$(PROD_COMPOSE) exec $(DB) psql -U npadmin -d nonnapina_prod
 
 # ─── Quick combos ─────────────────────────────────────────────────────────────
 

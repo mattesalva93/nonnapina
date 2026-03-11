@@ -49,3 +49,6 @@ playwright/.cache/
 .wwebjs_auth/
 .wwebjs_cache/
 
+# ─── SSH VPS ────────────────────────────────────────────
+nonnapina_deploy
+nonnapina_deploy.pub

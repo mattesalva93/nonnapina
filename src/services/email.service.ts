@@ -259,3 +259,81 @@ export async function sendScheduleEmail(
     return false;
   }
 }
+
+// ─── Missing categories notification ──────────────────────────────────────────
+
+interface MissingCategory {
+  name: string;
+  count: number;
+}
+
+function buildMissingCategoriesHtml(categories: MissingCategory[]): string {
+  const timestamp = localISOString();
+
+  const categoryRows = categories
+    .sort((a, b) => b.count - a.count)
+    .map(
+      cat =>
+        `<tr>
+          <td style="padding:8px 14px;border:1px solid #ddd;">${escapeHtml(cat.name)}</td>
+          <td style="padding:8px 14px;border:1px solid #ddd;text-align:center;">${cat.count}</td>
+        </tr>`
+    )
+    .join('\n');
+
+  return `<!DOCTYPE html>
+<html lang="it">
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,sans-serif;background-color:#f4f4f7;color:#333;">
+  <div style="max-width:640px;margin:20px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+    <div style="background-color:#e67e22;padding:20px 24px;">
+      <h1 style="margin:0;color:#fff;font-size:20px;">Nonna Pina — Categorie Non Gestite</h1>
+      <p style="margin:6px 0 0;color:rgba(255,255,255,0.9);font-size:14px;">${categories.length} categorie trovate su Keepa non presenti nella mappatura</p>
+    </div>
+    <div style="padding:24px;">
+      <p style="font-size:14px;margin-bottom:16px;">
+        Durante lo scraping sono state rilevate le seguenti categorie non ancora mappate.
+        &Egrave; necessario aggiungerle alla costante <code>CATEGORY_NAMES</code> nello scraper Keepa.
+      </p>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <thead>
+          <tr style="background-color:#f8f9fa;">
+            <th style="padding:10px 14px;border:1px solid #ddd;text-align:left;font-weight:600;">Categoria</th>
+            <th style="padding:10px 14px;border:1px solid #ddd;text-align:center;font-weight:600;">Offerte</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${categoryRows}
+        </tbody>
+      </table>
+    </div>
+    <div style="padding:16px 24px;background:#f8f9fa;border-top:1px solid #eee;font-size:12px;color:#888;text-align:center;">
+      Nonna Pina v${process.env.npm_package_version ?? '0.1.0'} &middot; ${timestamp}
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+export async function sendMissingCategoriesEmail(categories: MissingCategory[]): Promise<boolean> {
+  if (!isEmailAlertEnabled()) return false;
+
+  const transport = getTransporter();
+  if (!transport) return false;
+
+  const { alertFrom, alertTo, alertCc } = config.email;
+  const subject = `[WARNING] ${categories.length} categorie Keepa non mappate`;
+
+  try {
+    await transport.sendMail({
+      from: alertFrom,
+      to: alertTo,
+      cc: alertCc.length > 0 ? alertCc : undefined,
+      subject,
+      html: buildMissingCategoriesHtml(categories),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}

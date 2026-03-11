@@ -5,7 +5,7 @@ import path from 'node:path';
 import { connect } from 'puppeteer-real-browser';
 import type { Browser, Page } from 'rebrowser-puppeteer-core';
 import { config } from '../config/index.js';
-import { sendErrorAlert } from '../services/email.service.js';
+import { sendErrorAlert, sendMissingCategoriesEmail } from '../services/email.service.js';
 import { checkDealDuplicate } from '../services/product.service.js';
 import type { KeepaProduct, ScrapeResult } from '../types/index.js';
 import { createComponentLogger } from '../utils/logger.js';
@@ -93,8 +93,6 @@ const CATEGORY_NAMES: Record<string, string> = {
   27: 'Videogiochi',
   28: 'Amazon Luxury',
 };
-
-const MISSING_CATEGORIES_FILE = './output/missing-categories.json';
 
 async function isPageAlive(page: Page): Promise<boolean> {
   try {
@@ -438,39 +436,12 @@ async function detectMissingCategories(page: Page): Promise<void> {
 
     logger.warn({ missingCategories }, 'Unmapped categories detected');
 
-    let existingData: Record<string, string> = {};
-    try {
-      const raw = await fs.readFile(MISSING_CATEGORIES_FILE, 'utf-8');
-      existingData = JSON.parse(raw) as Record<string, string>;
-    } catch {
-      // File does not exist yet — will be created
+    const sent = await sendMissingCategoriesEmail(missingCategories);
+    if (sent) {
+      logger.info({ count: missingCategories.length }, 'Missing categories email sent');
+    } else {
+      logger.warn('Missing categories email not sent (disabled or transport error)');
     }
-
-    const allExistingIds = [
-      ...Object.keys(CATEGORY_NAMES).map(Number),
-      ...Object.keys(existingData).map(Number),
-    ];
-    let nextId = Math.max(...allExistingIds, 0) + 1;
-
-    const alreadyRecordedNames = Object.values(existingData).map(n => n.toLowerCase().trim());
-
-    let added = 0;
-    for (const cat of missingCategories) {
-      if (!alreadyRecordedNames.includes(cat.name.toLowerCase().trim())) {
-        existingData[nextId] = cat.name;
-        nextId++;
-        added++;
-      }
-    }
-
-    if (added === 0) {
-      logger.debug('All missing categories already recorded');
-      return;
-    }
-
-    await fs.mkdir(path.dirname(MISSING_CATEGORIES_FILE), { recursive: true });
-    await fs.writeFile(MISSING_CATEGORIES_FILE, JSON.stringify(existingData, null, 2), 'utf-8');
-    logger.info({ added, file: MISSING_CATEGORIES_FILE }, 'New missing categories saved');
   } catch (error) {
     logger.error({ err: (error as Error).message }, 'Error detecting missing categories');
   }
