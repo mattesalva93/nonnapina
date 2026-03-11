@@ -103,7 +103,7 @@ jobs:
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_KEY }}
           source: 'docker-compose.prod.yml'
-          target: '/home/deploy/keepa-tracker/'
+          target: '/home/deploy/nonnapina-prod/'
 
       - name: Deploy application
         uses: appleboy/ssh-action@v1
@@ -115,7 +115,7 @@ jobs:
           script: |
             set -euo pipefail
 
-            APP_DIR="/home/deploy/keepa-tracker"
+            APP_DIR="/home/deploy/nonnapina-prod"
             mkdir -p "$APP_DIR"
             cd "$APP_DIR"
 
