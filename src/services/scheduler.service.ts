@@ -3,6 +3,7 @@ import { localISOString } from '../utils/date.js';
 import { createComponentLogger } from '../utils/logger.js';
 import { sendErrorAlert, sendScheduleEmail } from './email.service.js';
 import { runLowestDealCycle } from './lowest-deal.service.js';
+import { getActiveRun } from './product.service.js';
 import { runPublishCycle } from './publish.service.js';
 import { runTop5PublishCycle } from './top5.service.js';
 
@@ -91,6 +92,17 @@ export function initPublishScheduler(): void {
 
         void (async () => {
           try {
+            // Defer publishing while a scrape job is running to avoid
+            // two Chromium instances competing for memory (WhatsApp + Keepa).
+            const activeRun = await getActiveRun();
+            if (activeRun) {
+              logger.warn(
+                { slot, variant, scrapeRunId: activeRun.id },
+                'Publish deferred — scrape job in progress'
+              );
+              return;
+            }
+
             let result;
             if (useLowest) {
               // Try lowest-deal first; fall back to regular if none available

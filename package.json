@@ -1,6 +1,6 @@
 {
   "name": "nonnapina-prod",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Amazon affiliate deal discovery and publishing service",
   "main": "dist/server.js",
   "type": "module",

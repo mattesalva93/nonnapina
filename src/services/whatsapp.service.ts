@@ -15,8 +15,46 @@ let qrCode: string | undefined;
 let isReady = false;
 let isInitializing = false;
 let readyTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
+let isRecovering = false;
 
 type WhatsAppStatus = 'disconnected' | 'initializing' | 'qr_pending' | 'ready';
+
+const FATAL_BROWSER_PATTERNS = [
+  'detached Frame',
+  'Execution context was destroyed',
+  'Session closed',
+  'Target closed',
+  'Protocol error',
+];
+
+function isFatalBrowserError(message: string): boolean {
+  return FATAL_BROWSER_PATTERNS.some(pattern => message.includes(pattern));
+}
+
+function triggerRecovery(reason: string): void {
+  if (isRecovering) return;
+  isRecovering = true;
+  isReady = false;
+  isInitializing = false;
+  logger.warn(
+    { reason },
+    'Fatal browser error detected — destroying client and reinitializing in 10s'
+  );
+  const oldClient = client;
+  client = undefined;
+  // Destroy asynchronously; don't block the caller
+  void (async () => {
+    try {
+      await oldClient?.destroy();
+    } catch {
+      // ignore — the browser is already broken
+    }
+    isRecovering = false;
+    setTimeout(() => {
+      void initWhatsApp();
+    }, 10_000);
+  })();
+}
 
 export function getWhatsAppStatus(): { status: WhatsAppStatus; qr: string | undefined } {
   if (isReady) return { status: 'ready', qr: undefined };
@@ -473,6 +511,9 @@ export async function sendToWhatsAppChannel(
   } catch (err) {
     const msg = (err as Error).message;
     logger.error({ error: msg }, 'WhatsApp channel publish failed');
+    if (isFatalBrowserError(msg)) {
+      triggerRecovery(msg);
+    }
     return { success: false, error: msg };
   }
 }
@@ -500,6 +541,9 @@ export async function sendBufferToWhatsAppChannel(
   } catch (err) {
     const msg = (err as Error).message;
     logger.error({ error: msg }, 'WhatsApp channel buffer publish failed');
+    if (isFatalBrowserError(msg)) {
+      triggerRecovery(msg);
+    }
     return { success: false, error: msg };
   }
 }
