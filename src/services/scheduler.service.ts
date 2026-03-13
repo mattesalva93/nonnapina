@@ -91,15 +91,38 @@ export function initPublishScheduler(): void {
 
         void (async () => {
           try {
+            let result;
             if (useLowest) {
               // Try lowest-deal first; fall back to regular if none available
-              const result = await runLowestDealCycle();
+              result = await runLowestDealCycle();
               if (!result) {
                 logger.info({ slot }, 'No lowest-price deals — falling back to regular cycle');
-                await runPublishCycle();
+                result = await runPublishCycle();
               }
             } else {
-              await runPublishCycle();
+              result = await runPublishCycle();
+            }
+
+            if (!result) {
+              logger.warn({ slot, variant }, 'Scheduled publish skipped — no deals available');
+              void sendErrorAlert({
+                errorMessage: `Scheduled publish at slot ${slot} (${variant}) found no deals to publish`,
+                component: 'ScheduledPublish',
+                severity: 'warning',
+                additionalData: { slot, variant },
+              });
+            } else if (!result.allSucceeded) {
+              const failed = result.channels
+                .filter(ch => !ch.success)
+                .map(ch => `${ch.channel}: ${ch.error ?? 'unknown'}`)
+                .join('; ');
+              logger.warn({ slot, variant, failed }, 'Scheduled publish partially failed');
+              void sendErrorAlert({
+                errorMessage: `Scheduled publish at slot ${slot} (${variant}) partially failed: ${failed}`,
+                component: 'ScheduledPublish',
+                severity: 'error',
+                additionalData: { slot, variant, dealId: result.dealId, asin: result.asin },
+              });
             }
           } catch (err) {
             const message = (err as Error).message;

@@ -98,7 +98,21 @@ export async function runScrapeJob(scrapeRunId: string): Promise<void> {
     logger.info({ count: keepaProducts.length }, 'Keepa scraping complete');
 
     if (keepaProducts.length === 0) {
-      await completeScrapeRun(scrapeRunId, 0);
+      const errorMsg =
+        'Scrape completed but returned 0 products — likely a browser or page load failure';
+      await failScrapeRun(scrapeRunId, errorMsg);
+      logger.error({ scrapeRunId }, errorMsg);
+      const screenshots = await getLatestScreenshots(4);
+      void sendErrorAlert({
+        errorMessage: errorMsg,
+        component: 'ScrapeJob',
+        severity: 'critical',
+        scrapeRunId,
+        attachments: screenshots.map(filepath => ({
+          filename: path.basename(filepath),
+          path: path.resolve(filepath),
+        })),
+      });
       return;
     }
 

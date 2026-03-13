@@ -25,10 +25,14 @@ FROM node:22-bookworm-slim AS runner
 # Install Chromium, Xvfb and required system libraries for puppeteer-real-browser
 # Xvfb provides a virtual display so the browser runs in "headed" mode,
 # which is essential for bypassing Cloudflare/Turnstile bot detection.
+# x11-utils provides xdpyinfo for verifying Xvfb readiness before browser launch.
+# procps provides pkill/pgrep for cleaning up stale Chromium processes.
 RUN apt-get update && apt-get install -y \
-    chromium \
-    xvfb \
-    --no-install-recommends \
+  chromium \
+  xvfb \
+  x11-utils \
+  procps \
+  --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
 # Tell chrome-launcher (used by puppeteer-real-browser) where Chromium is

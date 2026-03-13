@@ -1,5 +1,6 @@
 /// <reference lib="dom" />
 /// <reference lib="dom.iterable" />
+import { execSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { connect } from 'puppeteer-real-browser';
@@ -105,6 +106,157 @@ async function isPageAlive(page: Page): Promise<boolean> {
   }
 }
 
+// ─── Browser lifecycle helpers ────────────────────────────────────────────────
+
+const BROWSER_CONNECT_ARGS = [
+  '--no-first-run',
+  '--no-default-browser-check',
+  '--disable-popup-blocking',
+  '--disable-prompt-on-repost',
+  '--disable-blink-features=AutomationControlled',
+  '--no-sandbox',
+  '--disable-crash-reporter',
+  '--disable-dev-shm-usage',
+  '--disable-gpu',
+  '--disable-software-rasterizer',
+];
+
+/**
+ * Kill any stale Chromium/chrome processes left over from a previous run.
+ * This prevents zombie processes from blocking WebSocket ports and consuming
+ * /dev/shm memory, which is the root cause of "Failed to fetch browser
+ * webSocket URL" errors after container restarts.
+ */
+function killStaleChromiumProcesses(): void {
+  try {
+    // pkill sends SIGTERM to all matching processes; -f matches full command line.
+    // We ignore errors because there may be no matching processes.
+    execSync('pkill -f chromium 2>/dev/null || true', { stdio: 'ignore' });
+    execSync('pkill -f chrome 2>/dev/null || true', { stdio: 'ignore' });
+    logger.info('Stale Chromium processes cleaned up');
+  } catch {
+    // pkill returns non-zero if no processes matched — that's fine
+    logger.debug('No stale Chromium processes found (or cleanup not needed)');
+  }
+}
+
+/**
+ * Verify that Xvfb (the virtual framebuffer) is running and responsive.
+ * puppeteer-real-browser needs a display server because it runs in headed mode
+ * to bypass Cloudflare/Turnstile. If Xvfb crashed or hasn't started yet the
+ * browser connect will fail silently.
+ */
+async function ensureXvfbReady(maxWaitMs = 10_000): Promise<void> {
+  const start = Date.now();
+  const checkInterval = 500;
+
+  while (Date.now() - start < maxWaitMs) {
+    try {
+      // xdpyinfo queries the X display — if it succeeds, Xvfb is alive
+      execSync('xdpyinfo -display :99 >/dev/null 2>&1', { timeout: 3000 });
+      logger.debug('Xvfb display :99 is ready');
+      return;
+    } catch {
+      // Xvfb not ready yet — wait and retry
+      await delay(checkInterval);
+    }
+  }
+
+  // Xvfb not available — start it ourselves
+  logger.warn('Xvfb not detected — attempting to start it');
+  try {
+    execSync('Xvfb :99 -screen 0 1280x800x24 -nolisten tcp &', {
+      stdio: 'ignore',
+      env: { ...process.env, DISPLAY: ':99' },
+    });
+    // Give Xvfb time to initialize
+    await delay(2000);
+    logger.info('Xvfb started on display :99');
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, 'Could not start Xvfb');
+  }
+}
+
+/**
+ * Launch a browser with full cleanup and retry logic.
+ * Between each attempt we:
+ * 1. Kill stale Chromium processes
+ * 2. Verify Xvfb is running
+ * 3. Wait before retrying (exponential backoff)
+ */
+async function launchBrowserWithRetry(
+  retries = 3,
+  baseDelayMs = 5000
+): Promise<{ browser: Browser; page: Page }> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      // Clean slate before every attempt
+      killStaleChromiumProcesses();
+      await delay(1000); // let OS reclaim resources
+      await ensureXvfbReady();
+
+      logger.info({ attempt, retries }, 'Attempting browser launch');
+
+      const { browser, page } = await connect({
+        headless: false,
+        args: BROWSER_CONNECT_ARGS,
+        customConfig: {},
+        turnstile: true,
+        connectOption: {
+          defaultViewport: undefined,
+          protocolTimeout: 60_000,
+        },
+        disableXvfb: false,
+        ignoreAllFlags: false,
+      });
+
+      // Verify browser is actually responsive
+      const title = await page.evaluate(() => document.title).catch(() => undefined);
+      if (title === undefined) {
+        throw new Error('Browser launched but page is not responsive');
+      }
+
+      logger.info({ attempt }, 'Browser launched and verified');
+      return { browser, page };
+    } catch (error) {
+      const msg = (error as Error).message;
+      logger.error({ attempt, retries, err: msg }, 'Browser launch failed');
+
+      if (attempt === retries) {
+        throw new Error(`Browser launch failed after ${retries} attempts. Last error: ${msg}`);
+      }
+
+      const waitMs = baseDelayMs * Math.pow(2, attempt - 1);
+      logger.warn({ retryInSec: waitMs / 1000 }, 'Waiting before next browser launch attempt');
+      await delay(waitMs);
+    }
+  }
+
+  throw new Error('Browser launch failed — unreachable');
+}
+
+/**
+ * Safely close the browser, catching and logging any errors.
+ * Also kills lingering Chromium processes to prevent zombies.
+ */
+async function closeBrowserSafely(browser: Browser | undefined): Promise<void> {
+  if (!browser) return;
+
+  const keepOpenMs = parseInt(process.env.BROWSER_KEEP_OPEN_MS ?? '3000', 10);
+  if (keepOpenMs > 0) {
+    await delay(keepOpenMs);
+  }
+
+  try {
+    await browser.close();
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, 'browser.close() failed — force-killing');
+  }
+
+  // Always clean up to prevent zombie accumulation
+  killStaleChromiumProcesses();
+}
+
 /**
  * Recovery: launch a fresh browser + deals page, re-apply essential filters,
  * and click "Find Deals" so the caller can resume category iteration.
@@ -117,26 +269,7 @@ async function recoverDealsPage(
 ): Promise<{ browser: Browser; page: Page }> {
   logger.info('Launching fresh browser for recovery');
 
-  const { browser: newBrowser, page: newPage } = await connect({
-    headless: false,
-    args: [
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-popup-blocking',
-      '--disable-prompt-on-repost',
-      '--disable-blink-features=AutomationControlled',
-      '--no-sandbox',
-      '--disable-crash-reporter',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--disable-software-rasterizer',
-    ],
-    customConfig: {},
-    turnstile: true,
-    connectOption: { defaultViewport: undefined, protocolTimeout: 60_000 },
-    disableXvfb: false,
-    ignoreAllFlags: false,
-  });
+  const { browser: newBrowser, page: newPage } = await launchBrowserWithRetry();
 
   await newPage.setViewport({ width: 1280, height: 800 });
   await newPage.setUserAgent(
@@ -517,11 +650,7 @@ async function scrapeAllCategories(
       logger.error('Main page session died — attempting recovery');
       try {
         // Close old browser (process may already be dead — ignore errors)
-        try {
-          await activeBrowser.close();
-        } catch {
-          /* already dead */
-        }
+        await closeBrowserSafely(activeBrowser);
         // Close old detail page reference
         detailPage = undefined;
         detailPageInitialized = false;
@@ -1136,29 +1265,7 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
   let page: Page | undefined;
 
   try {
-    const { browser: realBrowser, page: realPage } = await connect({
-      headless: false,
-      args: [
-        '--no-first-run',
-        '--no-default-browser-check',
-        '--disable-popup-blocking',
-        '--disable-prompt-on-repost',
-        '--disable-blink-features=AutomationControlled',
-        '--no-sandbox',
-        '--disable-crash-reporter',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--disable-software-rasterizer',
-      ],
-      customConfig: {},
-      turnstile: true,
-      connectOption: {
-        defaultViewport: undefined,
-        protocolTimeout: 60_000,
-      },
-      disableXvfb: false,
-      ignoreAllFlags: false,
-    });
+    const { browser: realBrowser, page: realPage } = await launchBrowserWithRetry();
 
     browser = realBrowser;
     page = realPage;
@@ -1611,7 +1718,7 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       await delay(keepOpenMs);
     }
 
-    await browser.close();
+    await closeBrowserSafely(browser);
     return { products: allProducts, lowestAsins };
   } catch (error) {
     const message = (error as Error).message;
@@ -1628,13 +1735,7 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       })),
     });
 
-    if (browser) {
-      const keepOpenMs = parseInt(process.env.BROWSER_KEEP_OPEN_MS ?? '3000', 10);
-      if (keepOpenMs > 0) {
-        await delay(keepOpenMs);
-      }
-      await browser.close();
-    }
+    await closeBrowserSafely(browser);
 
     throw error;
   }
