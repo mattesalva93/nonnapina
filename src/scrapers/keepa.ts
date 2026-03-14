@@ -129,13 +129,26 @@ const BROWSER_CONNECT_ARGS = [
  */
 function killStaleChromiumProcesses(): void {
   try {
-    // pkill sends SIGTERM to all matching processes; -f matches full command line.
-    // We ignore errors because there may be no matching processes.
-    execSync('pkill -f chromium 2>/dev/null || true', { stdio: 'ignore' });
-    execSync('pkill -f chrome 2>/dev/null || true', { stdio: 'ignore' });
-    logger.info('Stale Chromium processes cleaned up');
+    // Kill only Chromium processes that are NOT part of the WhatsApp session.
+    // WhatsApp runs its own headless Chromium with a --user-data-dir pointing
+    // to .wwebjs_auth. We must keep those alive to avoid "detached Frame" errors
+    // on the next scheduled publish.
+    //
+    // Strategy: list all chromium/chrome PIDs, filter out those whose command
+    // line contains the WhatsApp session directory, then kill the rest.
+    const script = `
+      for pid in $(pgrep -f 'chrom(ium|e)' 2>/dev/null); do
+        cmdline=$(cat /proc/$pid/cmdline 2>/dev/null | tr '\\0' ' ')
+        case "$cmdline" in
+          *wwebjs_auth*) ;;
+          *) kill "$pid" 2>/dev/null ;;
+        esac
+      done
+    `;
+    execSync(script, { stdio: 'ignore' });
+    logger.info('Stale Chromium processes cleaned up (WhatsApp excluded)');
   } catch {
-    // pkill returns non-zero if no processes matched — that's fine
+    // pgrep returns non-zero if no processes matched — that's fine
     logger.debug('No stale Chromium processes found (or cleanup not needed)');
   }
 }

@@ -42,12 +42,18 @@ function triggerRecovery(reason: string): void {
   );
   const oldClient = client;
   client = undefined;
-  // Destroy asynchronously; don't block the caller
+  // Destroy asynchronously with a timeout — destroy() can hang forever
+  // if the browser process was killed externally (no WebSocket to talk to).
   void (async () => {
     try {
-      await oldClient?.destroy();
+      await Promise.race([
+        oldClient?.destroy(),
+        new Promise((_resolve, reject) =>
+          setTimeout(() => reject(new Error('destroy timeout')), 5_000)
+        ),
+      ]);
     } catch {
-      // ignore — the browser is already broken
+      // ignore — the browser is already broken or destroy timed out
     }
     isRecovering = false;
     setTimeout(() => {
@@ -265,6 +271,18 @@ export async function initWhatsApp(): Promise<void> {
         if (msg.type() === 'error') {
           logger.warn({ browserConsole: msg.text() }, 'WhatsApp browser console error');
         }
+      });
+    }
+
+    // Detect external browser death (e.g. pkill, OOM killer, crash).
+    // pupBrowser.on('disconnected') is the only reliable Puppeteer signal
+    // that fires when the Chromium process is killed from outside.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pupBrowser = (client as any).pupBrowser;
+    if (pupBrowser) {
+      pupBrowser.on('disconnected', () => {
+        logger.error('Chromium browser process died — triggering immediate recovery');
+        triggerRecovery('Browser process disconnected (external kill or crash)');
       });
     }
   } catch (err) {
