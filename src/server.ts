@@ -11,10 +11,11 @@ import { productsRouter } from './routes/products.routes.js';
 import { publishRouter } from './routes/publish.routes.js';
 import { runScrapeJob, scrapeRouter } from './routes/scrape.routes.js';
 import { whatsappRouter } from './routes/whatsapp.routes.js';
+import { areAllChannelsReady } from './services/channels/channel.registry.js';
 import { sendErrorAlert } from './services/email.service.js';
 import { failScrapeRun, getActiveRun, prisma, startScrapeRun } from './services/product.service.js';
 import { initPublishScheduler, stopAllCronTasks } from './services/scheduler.service.js';
-import { destroyWhatsApp, initWhatsApp } from './services/whatsapp.service.js';
+import { destroyWhatsApp, getWhatsAppStatus, initWhatsApp } from './services/whatsapp.service.js';
 import { localISOString } from './utils/date.js';
 import { createComponentLogger } from './utils/logger.js';
 
@@ -118,6 +119,76 @@ const httpServer = app.listen(port, () => {
   logger.info({ port, env: config.server.nodeEnv }, `Server running on port ${port}`);
 });
 
+// ─── Post-scrape publish health check ─────────────────────────────────────────
+// After each scrape completes, verify that all publish channels are still
+// operational. If WhatsApp is down (e.g. Chromium crash), wait for any
+// in-progress recovery, then check again. If still broken, send an alert.
+
+const HEALTH_CHECK_WAIT_MS = 30_000; // time to wait for recovery to complete
+const HEALTH_CHECK_POLL_MS = 5_000; // interval between status checks
+
+async function postScrapeHealthCheck(scrapeRunId: string): Promise<void> {
+  const check = areAllChannelsReady();
+  if (check.ready) {
+    logger.info({ scrapeRunId }, 'Post-scrape health check passed — all channels ready');
+    return;
+  }
+
+  logger.warn(
+    { scrapeRunId, reason: check.reason },
+    'Post-scrape health check: channels not ready — waiting for recovery'
+  );
+
+  // Wait up to HEALTH_CHECK_WAIT_MS for the pupBrowser.on('disconnected')
+  // recovery to complete (it reinitializes WhatsApp automatically).
+  const deadline = Date.now() + HEALTH_CHECK_WAIT_MS;
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, HEALTH_CHECK_POLL_MS));
+    const recheck = areAllChannelsReady();
+    if (recheck.ready) {
+      logger.info({ scrapeRunId }, 'Post-scrape health check passed after recovery');
+      return;
+    }
+  }
+
+  // Still broken after waiting — attempt manual reinitialization
+  const waStatus = getWhatsAppStatus();
+  if (waStatus.status === 'disconnected') {
+    logger.warn(
+      { scrapeRunId },
+      'WhatsApp still disconnected — attempting manual reinitialization'
+    );
+    try {
+      await initWhatsApp();
+      // Give it a moment to connect
+      await new Promise(resolve => setTimeout(resolve, 15_000));
+    } catch (err) {
+      logger.error({ err: (err as Error).message }, 'Manual WhatsApp reinitialization failed');
+    }
+  }
+
+  const finalCheck = areAllChannelsReady();
+  if (finalCheck.ready) {
+    logger.info({ scrapeRunId }, 'Post-scrape health check passed after manual reinitialization');
+    return;
+  }
+
+  // All recovery attempts exhausted — send alert
+  logger.error(
+    { scrapeRunId, reason: finalCheck.reason },
+    'Post-scrape health check FAILED — publish channels are broken'
+  );
+  void sendErrorAlert({
+    errorMessage: `Post-scrape publish health check failed: ${finalCheck.reason}. Automatic recovery was attempted but channels remain unavailable. Manual intervention may be required.`,
+    component: 'PostScrapeHealthCheck',
+    severity: 'critical',
+    scrapeRunId,
+    additionalData: {
+      whatsappStatus: getWhatsAppStatus().status,
+    },
+  });
+}
+
 // ─── Scheduled scraping ──────────────────────────────────────────────────────
 // Runs every day at 08:00 (can be overridden via SCRAPE_CRON env var)
 const { cronSchedule } = config.server;
@@ -155,6 +226,8 @@ if (config.server.nodeEnv !== 'test') {
         logger.info({ scrapeRunId: run.id }, 'Scheduled scrape run created');
         await runScrapeJob(run.id);
         logger.info({ scrapeRunId: run.id }, 'Scheduled scrape run completed');
+        // Verify channels are still healthy after scraping
+        await postScrapeHealthCheck(run.id);
       } catch (err) {
         const message = (err as Error).message;
         logger.error({ err: message }, 'Scheduled scrape failed');

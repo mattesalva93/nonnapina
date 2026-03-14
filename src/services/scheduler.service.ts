@@ -1,4 +1,5 @@
 import cron from 'node-cron';
+import { config } from '../config/index.js';
 import { localISOString } from '../utils/date.js';
 import { createComponentLogger } from '../utils/logger.js';
 import { sendErrorAlert, sendScheduleEmail } from './email.service.js';
@@ -19,16 +20,51 @@ const MAX_POSTS_PER_HOUR = 4;
 // Probability of picking the "minimo storico" variant over the regular post
 const LOWEST_DEAL_PROBABILITY = 0.2; // 20%
 
+// Minutes to keep clear after each scrape start time
+const SCRAPE_BLACKOUT_MINUTES = 20;
+
 // ─── State ────────────────────────────────────────────────────────────────────
 let dailySchedule: Set<string> = new Set();
+
+// ─── Scrape blackout windows ──────────────────────────────────────────────────
+// Parse the SCRAPE_CRON expression to extract (hour, minute) pairs, then build
+// blackout ranges [start, start+SCRAPE_BLACKOUT_MINUTES) expressed in
+// minutes-since-midnight. Slots falling inside any blackout are excluded.
+
+export function parseScrapeBlackoutMinutes(cronExpr: string): Array<[number, number]> {
+  // Expected format: "MM H1,H2,... * * *"  (standard cron, minute + hours list)
+  const parts = cronExpr.trim().split(/\s+/);
+  if (parts.length < 2) return [];
+
+  const minute = parseInt(parts[0], 10);
+  if (Number.isNaN(minute)) return [];
+
+  const hours = parts[1]
+    .split(',')
+    .map(h => parseInt(h, 10))
+    .filter(h => !Number.isNaN(h));
+
+  return hours.map(h => {
+    const start = h * 60 + minute;
+    const end = start + SCRAPE_BLACKOUT_MINUTES;
+    return [start, end] as [number, number];
+  });
+}
+
+function isInBlackout(hour: number, minute: number, blackouts: Array<[number, number]>): boolean {
+  const totalMinutes = hour * 60 + minute;
+  return blackouts.some(([start, end]) => totalMinutes >= start && totalMinutes < end);
+}
 
 // ─── Schedule generation ──────────────────────────────────────────────────────
 // For each hour in the window, pick a random count between MIN and MAX,
 // then generate that many unique random minutes. The result is a set of
 // "HH:MM" strings representing the exact minutes when a publish will fire.
+// Slots that fall within a scrape blackout window are discarded.
 
 export function generateDailySchedule(): Set<string> {
   const schedule = new Set<string>();
+  const blackouts = parseScrapeBlackoutMinutes(config.server.cronSchedule);
 
   for (let hour = PUBLISH_START_HOUR; hour <= PUBLISH_END_HOUR; hour++) {
     const count =
@@ -36,8 +72,13 @@ export function generateDailySchedule(): Set<string> {
       Math.floor(Math.random() * (MAX_POSTS_PER_HOUR - MIN_POSTS_PER_HOUR + 1));
 
     const minutes = new Set<number>();
-    while (minutes.size < count) {
-      minutes.add(Math.floor(Math.random() * 60));
+    // Cap attempts to avoid infinite loop if most of the hour is blacked out
+    let attempts = 0;
+    while (minutes.size < count && attempts < 120) {
+      const candidate = Math.floor(Math.random() * 60);
+      attempts++;
+      if (isInBlackout(hour, candidate, blackouts)) continue;
+      minutes.add(candidate);
     }
 
     for (const minute of minutes) {

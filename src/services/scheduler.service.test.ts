@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { generateDailySchedule } from './scheduler.service.js';
+import { config } from '../config/index.js';
+import { generateDailySchedule, parseScrapeBlackoutMinutes } from './scheduler.service.js';
 
 describe('generateDailySchedule', () => {
   it('returns a Set of "HH:MM" strings', () => {
@@ -67,5 +68,47 @@ describe('generateDailySchedule', () => {
     for (let h = 6; h <= 22; h++) {
       expect(hoursPresent.has(h)).toBe(true);
     }
+  });
+
+  it('does not generate slots inside scrape blackout windows', () => {
+    const blackoutRanges = parseScrapeBlackoutMinutes(config.server.cronSchedule);
+    // Skip test if no blackout windows overlap the publish window
+    if (blackoutRanges.length === 0) return;
+
+    for (let i = 0; i < 20; i++) {
+      const schedule = generateDailySchedule();
+
+      for (const slot of schedule) {
+        const [hh, mm] = slot.split(':').map(Number);
+        const totalMinutes = hh * 60 + mm;
+        for (const [start, end] of blackoutRanges) {
+          expect(
+            totalMinutes < start || totalMinutes >= end,
+            `Slot ${slot} falls in blackout window [${start}, ${end})`
+          ).toBe(true);
+        }
+      }
+    }
+  });
+});
+
+describe('parseScrapeBlackoutMinutes', () => {
+  it('parses standard cron with multiple hours', () => {
+    const result = parseScrapeBlackoutMinutes('15 3,6,18 * * *');
+    expect(result).toEqual([
+      [3 * 60 + 15, 3 * 60 + 35],
+      [6 * 60 + 15, 6 * 60 + 35],
+      [18 * 60 + 15, 18 * 60 + 35],
+    ]);
+  });
+
+  it('parses single-hour cron', () => {
+    const result = parseScrapeBlackoutMinutes('0 8 * * *');
+    expect(result).toEqual([[480, 500]]);
+  });
+
+  it('returns empty for invalid cron', () => {
+    expect(parseScrapeBlackoutMinutes('')).toEqual([]);
+    expect(parseScrapeBlackoutMinutes('invalid')).toEqual([]);
   });
 });
