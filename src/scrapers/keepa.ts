@@ -34,6 +34,71 @@ async function takeScreenshot(page: Page, label: string): Promise<void> {
 
 const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
+/**
+ * Wait for the Keepa deals UI to be fully loaded and interactive.
+ * Handles Cloudflare challenges (Turnstile, JS challenges, interstitials)
+ * by polling for the #submitDealQuery button which only exists on the
+ * real deals page. If a challenge is detected, waits up to 120s for it
+ * to resolve before giving up.
+ */
+async function waitForDealsUI(page: Page, context: string, maxWaitMs = 120_000): Promise<void> {
+  const start = Date.now();
+  let lastLog = 0;
+
+  while (Date.now() - start < maxWaitMs) {
+    const state = await page
+      .evaluate(() => {
+        const title = document.title ?? '';
+        const bodyText = document.body?.innerText ?? '';
+
+        // Cloudflare / Turnstile challenge indicators
+        const isCloudflare =
+          title.includes('Just a moment') ||
+          bodyText.includes('Checking your browser') ||
+          bodyText.includes('Cloudflare') ||
+          !!document.querySelector('iframe[src*="challenges.cloudflare.com"]') ||
+          !!document.querySelector('#turnstile-wrapper') ||
+          !!document.querySelector('.cf-browser-verification');
+
+        // Keepa deals page indicator
+        const hasDealButton = !!document.querySelector('#submitDealQuery');
+
+        return { isCloudflare, hasDealButton, title: title.slice(0, 60) };
+      })
+      .catch(() => ({ isCloudflare: false, hasDealButton: false, title: 'page-error' }));
+
+    if (state.hasDealButton) {
+      logger.info({ context, waitedMs: Date.now() - start }, 'Deals UI is ready');
+      return;
+    }
+
+    // Log progress every 15 seconds to avoid log spam
+    const now = Date.now();
+    if (now - lastLog > 15_000) {
+      lastLog = now;
+      if (state.isCloudflare) {
+        logger.warn(
+          { context, waitedMs: now - start, title: state.title },
+          'Cloudflare challenge detected — waiting for it to resolve'
+        );
+      } else {
+        logger.info(
+          { context, waitedMs: now - start, title: state.title },
+          'Deals UI not ready yet — waiting'
+        );
+      }
+      await takeScreenshot(page, `wait_deals_ui_${context}_${Math.round((now - start) / 1000)}s`);
+    }
+
+    await delay(3000);
+  }
+
+  await takeScreenshot(page, `wait_deals_ui_${context}_timeout`);
+  throw new Error(
+    `Deals UI not ready after ${Math.round(maxWaitMs / 1000)}s (context: ${context})`
+  );
+}
+
 interface RetryOptions {
   retries?: number;
   baseDelay?: number;
@@ -217,7 +282,7 @@ async function launchBrowserWithRetry(
         turnstile: true,
         connectOption: {
           defaultViewport: undefined,
-          protocolTimeout: 60_000,
+          protocolTimeout: 120_000,
         },
         disableXvfb: false,
         ignoreAllFlags: false,
@@ -310,25 +375,8 @@ async function recoverDealsPage(
   await newPage.goto('https://keepa.com/#!deals', { waitUntil: 'networkidle2', timeout: 60000 });
   await delay(5000);
 
-  // Handle Cloudflare if present
-  const hasCloudflare = await newPage.evaluate(() => {
-    return (
-      document.body.innerText.includes('Checking your browser') ||
-      document.title.includes('Just a moment')
-    );
-  });
-  if (hasCloudflare) {
-    logger.warn('Cloudflare challenge during recovery — waiting 90 s');
-    await delay(90_000);
-  }
-
-  // Wait for the deals UI to be fully loaded before applying filters
-  try {
-    await newPage.waitForSelector('#submitDealQuery', { timeout: 30000 });
-    logger.debug('Recovery: Find Deals button ready');
-  } catch {
-    logger.warn('Recovery: Find Deals button not found after 30s — proceeding anyway');
-  }
+  // Wait for the deals UI (handles Cloudflare transparently)
+  await waitForDealsUI(newPage, 'recovery');
 
   // Price type filter: Amazon
   await newPage.evaluate(() => {
@@ -1448,18 +1496,17 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       logger.warn({ err: (error as Error).message }, 'Error selecting language');
     }
 
-    logger.info('Checking for Cloudflare challenge');
-    const hasCloudflare = await page.evaluate(() => {
-      return (
-        document.body.innerText.includes('Cloudflare') ||
-        document.body.innerText.includes('Checking your browser') ||
-        document.title.includes('Just a moment')
+    // Wait for the deals UI to be fully ready (handles Cloudflare transparently)
+    logger.info('Waiting for Keepa deals UI to be ready');
+    try {
+      await waitForDealsUI(page, 'main-flow');
+    } catch (error) {
+      logger.error(
+        { err: (error as Error).message },
+        'Deals UI never became ready — aborting scrape'
       );
-    });
-
-    if (hasCloudflare) {
-      logger.warn('Cloudflare challenge detected — waiting 90s');
-      await takeScreenshot(page, 'cloudflare_detected');
+      await closeBrowserSafely(browser);
+      return { products: [], lowestAsins: new Set<string>() };
     }
 
     logger.info('Selecting "Amazon" price type filter');
@@ -1579,58 +1626,47 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       logger.warn({ err: (error as Error).message }, 'Error applying filters');
     }
 
-    logger.info('Looking for Find Deals button');
-    try {
-      await page.waitForSelector('#submitDealQuery', { timeout: 5000 });
-      logger.debug('Find Deals button found');
+    logger.info('Clicking Find Deals button');
+    await page.evaluate(() => {
+      const button = document.querySelector('#submitDealQuery');
+      if (button) {
+        (button as HTMLElement).click();
+      }
+    });
 
-      await page.evaluate(() => {
-        const button = document.querySelector('#submitDealQuery');
-        if (button) {
-          (button as HTMLElement).click();
+    logger.debug('Waiting for products container');
+
+    let productPageReady = false;
+    const maxWaitTime = 60000;
+    const checkInterval = 2000;
+    const startTime = Date.now();
+
+    while (!productPageReady && Date.now() - startTime < maxWaitTime) {
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      logger.debug({ elapsedSec: elapsed }, 'Polling for products');
+
+      productPageReady = await page.evaluate(() => {
+        const productPage = document.querySelector('#productPage0');
+        const loadingIcon = document.querySelector('#loadingIcon');
+        const loadingVisible = loadingIcon && (loadingIcon as HTMLElement).style.display !== 'none';
+        if (productPage) {
+          const hasContent = productPage.innerHTML.trim().length > 50;
+          return hasContent && !loadingVisible;
         }
+        return false;
       });
 
-      logger.debug('Waiting for products container');
-
-      let productPageReady = false;
-      const maxWaitTime = 60000;
-      const checkInterval = 2000;
-      const startTime = Date.now();
-
-      while (!productPageReady && Date.now() - startTime < maxWaitTime) {
-        const elapsed = Math.round((Date.now() - startTime) / 1000);
-        logger.debug({ elapsedSec: elapsed }, 'Polling for products');
-
-        productPageReady = await page.evaluate(() => {
-          const productPage = document.querySelector('#productPage0');
-          const loadingIcon = document.querySelector('#loadingIcon');
-          const loadingVisible =
-            loadingIcon && (loadingIcon as HTMLElement).style.display !== 'none';
-          if (productPage) {
-            const hasContent = productPage.innerHTML.trim().length > 50;
-            return hasContent && !loadingVisible;
-          }
-          return false;
-        });
-
-        if (!productPageReady) {
-          await delay(checkInterval);
-        }
+      if (!productPageReady) {
+        await delay(checkInterval);
       }
+    }
 
-      if (productPageReady) {
-        logger.info('Products container ready');
-        await takeScreenshot(page, 'find_deals_results_ready');
-      } else {
-        logger.warn('Timeout waiting for products container');
-        await takeScreenshot(page, 'find_deals_results_timeout');
-      }
-    } catch (error) {
-      logger.warn(
-        { err: (error as Error).message },
-        'Could not interact with "Find Deals!" button'
-      );
+    if (productPageReady) {
+      logger.info('Products container ready');
+      await takeScreenshot(page, 'find_deals_results_ready');
+    } else {
+      logger.warn('Timeout waiting for products container');
+      await takeScreenshot(page, 'find_deals_results_timeout');
     }
 
     logger.debug('Skipping general page extraction — navigating to categories');

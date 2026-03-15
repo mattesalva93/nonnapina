@@ -177,5 +177,6 @@ jobs:
             # Show final status
             docker compose -f docker-compose.prod.yml ps
 
-            # Prune old Docker images (older than 7 days)
-            docker image prune -f --filter "until=168h"
+            # Prune ALL dangling Docker images immediately after deploy.
+            # The 3.75 GB image fills a 38 GB disk in ~10 deploys without cleanup.
+            docker image prune -af --filter "label!=com.docker.compose.project=nonnapina-prod" || docker image prune -f
