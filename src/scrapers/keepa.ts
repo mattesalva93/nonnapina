@@ -1723,6 +1723,30 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
     page.on('requestfailed', requestFailedHandler);
     page.on('console', consoleHandler);
 
+    // ── CDP WebSocket frame monitoring ──
+    const cdpSession = await page.createCDPSession();
+    await cdpSession.send('Network.enable');
+
+    interface WsFrame {
+      direction: 'sent' | 'received';
+      ts: number;
+      len: number;
+      snippet: string;
+    }
+    const wsFrames: WsFrame[] = [];
+
+    cdpSession.on('Network.webSocketFrameSent', (params: { response: { payloadData: string } }) => {
+      const data = params.response.payloadData;
+      wsFrames.push({ direction: 'sent', ts: Date.now(), len: data.length, snippet: data.slice(0, 200) });
+      logger.info({ len: data.length, snippet: data.slice(0, 200) }, 'WS frame SENT');
+    });
+
+    cdpSession.on('Network.webSocketFrameReceived', (params: { response: { payloadData: string } }) => {
+      const data = params.response.payloadData;
+      wsFrames.push({ direction: 'received', ts: Date.now(), len: data.length, snippet: data.slice(0, 200) });
+      logger.info({ len: data.length, snippet: data.slice(0, 200) }, 'WS frame RECEIVED');
+    });
+
     await page.evaluate(() => {
       const button = document.querySelector('#submitDealQuery');
       if (button) {
@@ -1783,6 +1807,9 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
     page.off('requestfailed', requestFailedHandler);
     page.off('console', consoleHandler);
 
+    // Stop CDP WebSocket monitoring
+    await cdpSession.detach().catch(() => {});
+
     // ── Diagnostic summary ──
     logger.info(
       {
@@ -1790,9 +1817,14 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
         responsesBack: capturedResponses.length,
         failedRequests: failedRequests.length,
         consoleErrors: consoleEntries.length,
+        wsFramesSent: wsFrames.filter(f => f.direction === 'sent').length,
+        wsFramesReceived: wsFrames.filter(f => f.direction === 'received').length,
       },
       'Find Deals network diagnostics summary'
     );
+    for (const f of wsFrames) {
+      logger.info(f, `WS frame ${f.direction}`);
+    }
     for (const r of capturedRequests) {
       logger.info(r, 'Keepa API request sent');
     }
