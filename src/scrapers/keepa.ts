@@ -1416,15 +1416,30 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
           page!.goto('https://keepa.com/#!deals', { waitUntil: 'networkidle2', timeout: 60000 }),
         { retries: 3, baseDelay: 5000, label: 'Deals page navigation' }
       );
-      await page.mouse.move(423, 354);
-      await page.mouse.move(320, 530);
       logger.info('Deals page loaded');
       await takeScreenshot(page, 'deals_page_loaded');
     } catch (error) {
       logger.warn({ err: (error as Error).message }, 'Deals page navigation timeout');
     }
 
-    await delay(5000);
+    // Simulate human mouse movement IMMEDIATELY after landing on deals page.
+    // Keepa's WebSocket sends `checkHuman: true` shortly after page load — the
+    // Turnstile challenge only renders once mouse/keyboard activity is detected.
+    // This MUST happen before any other page.evaluate() calls.
+    logger.info('Simulating mouse movement for Cloudflare challenge resolution');
+    try {
+      for (let i = 0; i < 15; i++) {
+        const x = 100 + Math.random() * 1000;
+        const y = 100 + Math.random() * 600;
+        await page.mouse.move(x, y, { steps: 5 });
+        await delay(200 + Math.random() * 300);
+      }
+      // Give Turnstile enough time to render and auto-solve
+      await delay(8000);
+      logger.info('Mouse movement complete — Cloudflare challenge should be resolved');
+    } catch (error) {
+      logger.warn({ err: (error as Error).message }, 'Mouse movement failed — proceeding anyway');
+    }
 
     logger.info('\n🇮🇹 Verifying Amazon.it domain...');
     const domainCheck = await page.evaluate(() => {
@@ -1507,25 +1522,6 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       );
       await closeBrowserSafely(browser);
       return { products: [], lowestAsins: new Set<string>() };
-    }
-
-    // Simulate human mouse movement to trigger Cloudflare Turnstile challenge
-    // resolution. Keepa sends a `checkHuman` WS message that only resolves when
-    // the browser has recorded mouse activity. puppeteer-real-browser's built-in
-    // turnstile solver handles the actual challenge once it renders.
-    logger.info('Simulating mouse movement for Cloudflare challenge resolution');
-    try {
-      for (let i = 0; i < 10; i++) {
-        const x = 100 + Math.random() * 1000;
-        const y = 100 + Math.random() * 600;
-        await page.mouse.move(x, y, { steps: 5 });
-        await delay(200 + Math.random() * 300);
-      }
-      // Give the Turnstile solver enough time to detect + resolve the challenge
-      await delay(5000);
-      logger.info('Mouse movement complete — Cloudflare challenge should be resolved');
-    } catch (error) {
-      logger.warn({ err: (error as Error).message }, 'Mouse movement failed — proceeding anyway');
     }
 
     logger.info('Selecting "Amazon" price type filter');
