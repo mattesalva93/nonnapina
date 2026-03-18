@@ -35,6 +35,75 @@ async function takeScreenshot(page: Page, label: string): Promise<void> {
 const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
+ * Race any promise against a timeout. Prevents a single hung page.evaluate()
+ * from blocking the entire scrape for the full 120s protocolTimeout.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    ),
+  ]);
+}
+
+// ─── Mouse heartbeat ──────────────────────────────────────────────────────────
+// Cloudflare Turnstile triggers re-verification when it detects bot-like
+// behaviour: programmatic JS execution with no human input. After the initial
+// mouse burst resolves the first challenge, subsequent inactivity (30-60s)
+// causes a re-check that destroys the page's execution context and hangs every
+// pending page.evaluate() for the full 120s protocolTimeout.
+//
+// The heartbeat runs periodic random mouse movements in the background so
+// Cloudflare never needs to re-verify. This is proactive — it prevents the
+// problem instead of reacting to it.
+
+class MouseHeartbeat {
+  private page: Page | undefined;
+  private timer: ReturnType<typeof setInterval> | undefined;
+  private running = false;
+
+  start(page: Page, intervalMs = 20_000): void {
+    this.stop();
+    this.page = page;
+    this.running = true;
+    this.timer = setInterval(() => void this.pulse(), intervalMs);
+    logger.debug({ intervalMs }, 'Mouse heartbeat started');
+  }
+
+  /** Swap the target page (e.g. after recovery) without restarting the timer. */
+  updatePage(page: Page): void {
+    this.page = page;
+  }
+
+  stop(): void {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = undefined;
+    }
+    this.running = false;
+    this.page = undefined;
+    logger.debug('Mouse heartbeat stopped');
+  }
+
+  private async pulse(): Promise<void> {
+    if (!this.running || !this.page) return;
+    try {
+      // 3-5 small random movements — enough for Cloudflare, unobtrusive.
+      const moves = 3 + Math.floor(Math.random() * 3);
+      for (let i = 0; i < moves; i++) {
+        const x = 200 + Math.random() * 800;
+        const y = 150 + Math.random() * 500;
+        await this.page.mouse.move(x, y, { steps: 3 });
+        await delay(100 + Math.random() * 200);
+      }
+    } catch {
+      // Page likely dead — the main loop will handle recovery.
+    }
+  }
+}
+
+/**
  * Wait for the Keepa deals UI to be fully loaded and interactive.
  * Handles Cloudflare challenges (Turnstile, JS challenges, interstitials)
  * by polling for the #submitDealQuery button which only exists on the
@@ -475,6 +544,29 @@ async function recoverDealsPage(
 
   if (!ready) throw new Error('Timeout waiting for products after recovery');
 
+  // Wait for category links to appear in #filterCats (populated by Keepa JS
+  // after results load — without this, no category can be clicked).
+  let catsReady = false;
+  const catStart = Date.now();
+  while (!catsReady && Date.now() - catStart < 30_000) {
+    catsReady = await newPage.evaluate(() => {
+      const fc = document.getElementById('filterCats');
+      if (!fc) return false;
+      return fc.querySelectorAll('a[rel]').length >= 3;
+    });
+    if (!catsReady) await delay(2000);
+  }
+
+  if (!catsReady) {
+    logger.warn('Recovery: category links did not appear in #filterCats');
+  } else {
+    const catCount = await newPage.evaluate(() => {
+      const fc = document.getElementById('filterCats');
+      return fc ? fc.querySelectorAll('a[rel]').length : 0;
+    });
+    logger.info({ categoryLinks: catCount }, 'Recovery: category links loaded');
+  }
+
   await takeScreenshot(newPage, 'recovery_deals_ready');
   logger.info('Deals page recovered successfully');
   return { browser: newBrowser, page: newPage };
@@ -526,12 +618,16 @@ async function ensurePanelExpanded(
   contentId: string,
   logLabel: string
 ): Promise<void> {
-  const isHidden = await page.evaluate((cId: string) => {
-    const content = document.getElementById(cId);
-    if (!content) return true;
-    const style = window.getComputedStyle(content);
-    return style.display === 'none' || content.offsetHeight === 0;
-  }, contentId);
+  const isHidden = await withTimeout(
+    page.evaluate((cId: string) => {
+      const content = document.getElementById(cId);
+      if (!content) return true;
+      const style = window.getComputedStyle(content);
+      return style.display === 'none' || content.offsetHeight === 0;
+    }, contentId),
+    15_000,
+    `ensurePanelExpanded(${logLabel}) visibility check`
+  );
 
   if (!isHidden) {
     logger.debug({ panel: logLabel }, 'Panel already expanded');
@@ -539,13 +635,17 @@ async function ensurePanelExpanded(
   }
 
   logger.debug({ panel: logLabel }, 'Expanding panel');
-  const clicked = await page.evaluate((tId: string) => {
-    const toggle = document.getElementById(tId);
-    if (!toggle) return false;
-    toggle.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    toggle.click();
-    return true;
-  }, toggleId);
+  const clicked = await withTimeout(
+    page.evaluate((tId: string) => {
+      const toggle = document.getElementById(tId);
+      if (!toggle) return false;
+      toggle.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      toggle.click();
+      return true;
+    }, toggleId),
+    15_000,
+    `ensurePanelExpanded(${logLabel}) click`
+  );
 
   if (!clicked) {
     logger.warn({ toggleId, panel: logLabel }, 'Panel toggle element not found');
@@ -559,12 +659,16 @@ async function ensurePanelExpanded(
   let visible = false;
 
   while (!visible && Date.now() - start < maxWait) {
-    visible = await page.evaluate((cId: string) => {
-      const content = document.getElementById(cId);
-      if (!content) return false;
-      const style = window.getComputedStyle(content);
-      return style.display !== 'none' && content.offsetHeight > 0;
-    }, contentId);
+    visible = await withTimeout(
+      page.evaluate((cId: string) => {
+        const content = document.getElementById(cId);
+        if (!content) return false;
+        const style = window.getComputedStyle(content);
+        return style.display !== 'none' && content.offsetHeight > 0;
+      }, contentId),
+      5_000,
+      `ensurePanelExpanded(${logLabel}) poll`
+    );
     if (!visible) await delay(interval);
   }
 
@@ -582,16 +686,20 @@ async function setCheckboxById(
   desired: boolean,
   logLabel: string
 ): Promise<boolean> {
-  const result = await page.evaluate(
-    (id: string, shouldBeChecked: boolean) => {
-      const checkbox = document.getElementById(id) as HTMLInputElement | null;
-      if (!checkbox) return 'not-found';
-      if (checkbox.checked === shouldBeChecked) return 'already-correct';
-      checkbox.click();
+  const result = await withTimeout(
+    page.evaluate(
+      (id: string, shouldBeChecked: boolean) => {
+        const checkbox = document.getElementById(id) as HTMLInputElement | null;
+        if (!checkbox) return 'not-found';
+        if (checkbox.checked === shouldBeChecked) return 'already-correct';
+        checkbox.click();
       return 'toggled';
     },
     checkboxId,
     desired
+  ),
+    15_000,
+    `setCheckboxById(${checkboxId})`
   );
 
   if (result === 'not-found') {
@@ -679,7 +787,8 @@ interface ReviewData {
 
 async function scrapeAllCategories(
   page: Page,
-  browser: Browser
+  browser: Browser,
+  heartbeat: MouseHeartbeat
 ): Promise<{ products: KeepaProduct[]; activePage: Page; activeBrowser: Browser }> {
   logger.info('Navigating through selected categories');
 
@@ -704,7 +813,9 @@ async function scrapeAllCategories(
   };
   attachCloseListener(activePage);
 
-  for (const categoryId of config.keepa.categories) {
+  const categoryIds = [...config.keepa.categories];
+  for (let catIdx = 0; catIdx < categoryIds.length; catIdx++) {
+    const categoryId = categoryIds[catIdx];
     const categoryName = CATEGORY_NAMES[categoryId];
     if (!categoryName) {
       logger.warn({ categoryId }, 'Category ID not found in CATEGORY_NAMES');
@@ -726,6 +837,7 @@ async function scrapeAllCategories(
         activePage = recovered.page;
         mainPageClosed = false;
         attachCloseListener(activePage);
+        heartbeat.updatePage(activePage);
 
         // Detail page will be re-created on demand per product
       } catch (err) {
@@ -1170,6 +1282,15 @@ async function scrapeAllCategories(
           activePage = recovered.page;
           mainPageClosed = false;
           attachCloseListener(activePage);
+          heartbeat.updatePage(activePage);
+
+          // Re-process the same category that failed (decrement index so the
+          // for-loop increment brings us back to the same position).
+          catIdx--;
+          logger.info(
+            { category: categoryName },
+            'Will retry failed category after recovery'
+          );
         } catch (recErr) {
           logger.error(
             { err: (recErr as Error).message },
@@ -1202,6 +1323,30 @@ async function scrapeAllCategories(
  */
 async function collectLowestAsins(page: Page): Promise<Set<string>> {
   logger.info('Pass 2: collecting lowest-ever ASINs');
+
+  // Verify category links are present in the DOM before iterating.
+  // After a recovery, #filterCats may be empty (populated asynchronously by Keepa).
+  let catsAvailable = false;
+  const catWaitStart = Date.now();
+  while (!catsAvailable && Date.now() - catWaitStart < 30_000) {
+    catsAvailable = await page.evaluate(() => {
+      const fc = document.getElementById('filterCats');
+      if (!fc) return false;
+      return fc.querySelectorAll('a[rel]').length >= 3;
+    }).catch(() => false);
+    if (!catsAvailable) await delay(2000);
+  }
+
+  if (!catsAvailable) {
+    const catCount = await page.evaluate(() => {
+      const fc = document.getElementById('filterCats');
+      return fc ? fc.querySelectorAll('a[rel]').length : 0;
+    }).catch(() => 0);
+    logger.warn(
+      { categoryLinks: catCount },
+      'Pass 2: #filterCats has no category links — Pass 2 will likely find 0 ASINs'
+    );
+  }
 
   const allLowestAsins = new Set<string>();
 
@@ -1263,7 +1408,7 @@ async function collectLowestAsins(page: Page): Promise<Set<string>> {
       );
 
       if (!clicked) {
-        logger.debug({ category: categoryName }, 'Pass 2: category link not found — skipping');
+        logger.warn({ category: categoryName }, 'Pass 2: category link not found — skipping');
         continue;
       }
 
@@ -1387,6 +1532,8 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
   let browser: Browser | undefined;
   let page: Page | undefined;
 
+  const heartbeat = new MouseHeartbeat();
+
   try {
     const { browser: realBrowser, page: realPage } = await launchBrowserWithRetry();
 
@@ -1503,6 +1650,11 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       logger.warn({ err: (error as Error).message }, 'Mouse movement failed — proceeding anyway');
     }
 
+    // Start the background mouse heartbeat to prevent Cloudflare re-challenges.
+    // Must run from this point on — all subsequent page.evaluate() calls depend
+    // on Cloudflare not re-verifying the session.
+    heartbeat.start(page);
+
     logger.info('\n🇮🇹 Verifying Amazon.it domain...');
     const domainCheck = await page.evaluate(() => {
       const domainElement = document.querySelector('.languageMenuImg[rel="domain"]');
@@ -1588,17 +1740,21 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
 
     logger.info('Selecting "Amazon" price type filter');
     try {
-      const filterClicked = await page.evaluate(() => {
-        const container = document.getElementById('dealPriceTypesFilter');
-        if (!container) return false;
-        const amazonOption = container.querySelector('div[data-type="0"]') as HTMLElement | null;
-        if (amazonOption) {
-          amazonOption.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          amazonOption.click();
-          return true;
-        }
-        return false;
-      });
+      const filterClicked = await withTimeout(
+        page.evaluate(() => {
+          const container = document.getElementById('dealPriceTypesFilter');
+          if (!container) return false;
+          const amazonOption = container.querySelector('div[data-type="0"]') as HTMLElement | null;
+          if (amazonOption) {
+            amazonOption.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            amazonOption.click();
+            return true;
+          }
+          return false;
+        }),
+        15_000,
+        'price type filter'
+      );
 
       if (filterClicked) {
         logger.debug('Amazon price filter selected');
@@ -1613,32 +1769,36 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
 
     logger.info('Setting time interval to 3 months');
     try {
-      const dateRangeSet = await page.evaluate(() => {
-        // Strategy 1: find dealDateRange container with setting attribute
-        const container = document.getElementById('dealDateRange');
-        if (container) {
-          const option = container.querySelector('[setting="3"]') as HTMLElement | null;
-          if (option) {
-            option.click();
-            return 'setting';
+      const dateRangeSet = await withTimeout(
+        page.evaluate(() => {
+          // Strategy 1: find dealDateRange container with setting attribute
+          const container = document.getElementById('dealDateRange');
+          if (container) {
+            const option = container.querySelector('[setting="3"]') as HTMLElement | null;
+            if (option) {
+              option.click();
+              return 'setting';
+            }
+            const children = container.querySelectorAll(':scope > *');
+            if (children.length > 3) {
+              (children[3] as HTMLElement).click();
+              return 'index';
+            }
           }
-          const children = container.querySelectorAll(':scope > *');
-          if (children.length > 3) {
-            (children[3] as HTMLElement).click();
-            return 'index';
+          // Strategy 2: text fallback
+          const elements = document.querySelectorAll('div, span, button');
+          for (const el of elements) {
+            const text = el.textContent?.trim() ?? '';
+            if (/^3\s*mesi$/i.test(text) || /^90\s*days?$/i.test(text)) {
+              (el as HTMLElement).click();
+              return 'text';
+            }
           }
-        }
-        // Strategy 2: text fallback
-        const elements = document.querySelectorAll('div, span, button');
-        for (const el of elements) {
-          const text = el.textContent?.trim() ?? '';
-          if (/^3\s*mesi$/i.test(text) || /^90\s*days?$/i.test(text)) {
-            (el as HTMLElement).click();
-            return 'text';
-          }
-        }
-        return null;
-      });
+          return null;
+        }),
+        15_000,
+        'date range filter'
+      );
 
       if (dateRangeSet) {
         logger.debug({ method: dateRangeSet }, 'Time interval set to 3 months');
@@ -1705,12 +1865,16 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
 
     logger.info('Clicking Find Deals button');
 
-    await page.evaluate(() => {
-      const button = document.querySelector('#submitDealQuery');
-      if (button) {
-        (button as HTMLElement).click();
-      }
-    });
+    await withTimeout(
+      page.evaluate(() => {
+        const button = document.querySelector('#submitDealQuery');
+        if (button) {
+          (button as HTMLElement).click();
+        }
+      }),
+      15_000,
+      'find deals click'
+    );
 
     logger.debug('Waiting for products container');
 
@@ -1722,22 +1886,26 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
     while (!productPageReady && Date.now() - startTime < maxWaitTime) {
       const elapsed = Math.round((Date.now() - startTime) / 1000);
 
-      productPageReady = await page.evaluate(() => {
-        const productPage = document.querySelector('#productPage0');
-        const loadingIcon = document.querySelector('#loadingIcon');
-        const loadingVisible = loadingIcon && (loadingIcon as HTMLElement).style.display !== 'none';
-        if (productPage) {
-          const hasContent = productPage.innerHTML.trim().length > 50;
-          return hasContent && !loadingVisible;
-        }
-        return false;
-      });
+      productPageReady = await withTimeout(
+        page.evaluate(() => {
+          const productPage = document.querySelector('#productPage0');
+          const loadingIcon = document.querySelector('#loadingIcon');
+          const loadingVisible = loadingIcon && (loadingIcon as HTMLElement).style.display !== 'none';
+          if (productPage) {
+            const hasContent = productPage.innerHTML.trim().length > 50;
+            return hasContent && !loadingVisible;
+          }
+          return false;
+        }),
+        15_000,
+        'product page poll'
+      ).catch(() => false);
 
       // Log progress every 15s at info level
       const now = Date.now();
       if (!productPageReady && now - startTime > 0 && elapsed % 15 === 0 && elapsed > 0) {
-        const pollState = await page
-          .evaluate(() => {
+        const pollState = await withTimeout(
+          page.evaluate(() => {
             const pp = document.querySelector('#productPage0');
             const li = document.querySelector('#loadingIcon');
             return {
@@ -1745,8 +1913,10 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
               productPageLen: pp?.innerHTML?.trim()?.length ?? 0,
               loadingDisplay: li ? (li as HTMLElement).style.display : '(not found)',
             };
-          })
-          .catch(() => ({
+          }),
+          5_000,
+          'product page poll status'
+        ).catch(() => ({
             productPageExists: false,
             productPageLen: 0,
             loadingDisplay: 'eval-error',
@@ -1769,6 +1939,26 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
 
     logger.debug('Skipping general page extraction — navigating to categories');
 
+    // ── Page health gate: if setup poisoned the CDP connection, recover now ──
+    if (!(await isPageAlive(page))) {
+      logger.error('Page died during setup — attempting recovery before category scraping');
+      try {
+        await closeBrowserSafely(browser);
+        const recovered = await recoverDealsPage();
+        browser = recovered.browser;
+        page = recovered.page;
+        heartbeat.updatePage(page);
+        logger.info('Recovery after setup succeeded');
+      } catch (recErr) {
+        logger.error(
+          { err: (recErr as Error).message },
+          'Recovery after setup failed — aborting scrape'
+        );
+        await closeBrowserSafely(browser);
+        return { products: [], lowestAsins: new Set<string>() };
+      }
+    }
+
     logger.info('Checking for missing categories');
     await detectMissingCategories(page);
 
@@ -1778,7 +1968,7 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       products: pass1Products,
       activePage,
       activeBrowser,
-    } = await scrapeAllCategories(page, browser!);
+    } = await scrapeAllCategories(page, browser!, heartbeat);
 
     // Use the (possibly recovered) browser and page for pass 2
     browser = activeBrowser;
@@ -1805,10 +1995,14 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
         await delay(500);
 
         logger.info('Clicking Find Deals for pass 2');
-        await dealsPage.evaluate(() => {
-          const button = document.querySelector('#submitDealQuery');
-          if (button) (button as HTMLElement).click();
-        });
+        await withTimeout(
+          dealsPage.evaluate(() => {
+            const button = document.querySelector('#submitDealQuery');
+            if (button) (button as HTMLElement).click();
+          }),
+          15_000,
+          'pass 2 find deals click'
+        );
 
         let passReady = false;
         const maxWaitPass2 = 60000;
@@ -1816,16 +2010,20 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
         const startPass2 = Date.now();
 
         while (!passReady && Date.now() - startPass2 < maxWaitPass2) {
-          passReady = await dealsPage.evaluate(() => {
-            const productPage = document.querySelector('#productPage0');
-            const loadingIcon = document.querySelector('#loadingIcon');
-            const loadingVisible =
-              loadingIcon && (loadingIcon as HTMLElement).style.display !== 'none';
-            if (productPage) {
-              return productPage.innerHTML.trim().length > 50 && !loadingVisible;
-            }
-            return false;
-          });
+          passReady = await withTimeout(
+            dealsPage.evaluate(() => {
+              const productPage = document.querySelector('#productPage0');
+              const loadingIcon = document.querySelector('#loadingIcon');
+              const loadingVisible =
+                loadingIcon && (loadingIcon as HTMLElement).style.display !== 'none';
+              if (productPage) {
+                return productPage.innerHTML.trim().length > 50 && !loadingVisible;
+              }
+              return false;
+            }),
+            15_000,
+            'pass 2 product poll'
+          ).catch(() => false);
           if (!passReady) await delay(checkIntPass2);
         }
 
@@ -1859,6 +2057,8 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       'Both passes complete — merged results'
     );
 
+    heartbeat.stop();
+
     const keepOpenMs = parseInt(process.env.BROWSER_KEEP_OPEN_MS ?? '3000', 10);
     if (keepOpenMs > 0) {
       logger.debug({ keepOpenMs }, 'Keeping browser open before close');
@@ -1868,6 +2068,8 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
     await closeBrowserSafely(browser);
     return { products: allProducts, lowestAsins };
   } catch (error) {
+    heartbeat.stop();
+
     const message = (error as Error).message;
     logger.error({ err: message, stack: (error as Error).stack }, 'Keepa scraping failed');
     const screenshots = await getLatestScreenshots(4);
