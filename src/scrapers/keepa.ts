@@ -1831,6 +1831,64 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       } catch { /* not base64 or not JSON — ignore */ }
     });
 
+    // Inject diagnostic wrappers for Keepa's checkHuman handling functions
+    await page.evaluate(() => {
+      const w = window as unknown as Record<string, unknown>;
+
+      // Wrap isUserHuman to detect if/when it's called
+      const origIsUserHuman = w.isUserHuman as ((...args: unknown[]) => unknown) | undefined;
+      if (typeof origIsUserHuman === 'function') {
+        w.isUserHuman = function (...args: unknown[]) {
+          console.warn('[DIAG] isUserHuman CALLED with args:', JSON.stringify(args));
+          try {
+            return origIsUserHuman.apply(this, args);
+          } catch (e) {
+            console.error('[DIAG] isUserHuman THREW:', e);
+            throw e;
+          }
+        };
+        console.warn('[DIAG] isUserHuman wrapper installed');
+      } else {
+        console.warn('[DIAG] isUserHuman NOT FOUND on window');
+      }
+
+      // Wrap showPopup to detect popup creation
+      const origShowPopup = w.showPopup as ((...args: unknown[]) => unknown) | undefined;
+      if (typeof origShowPopup === 'function') {
+        w.showPopup = function (...args: unknown[]) {
+          console.warn('[DIAG] showPopup CALLED with title:', args[0]);
+          try {
+            return origShowPopup.apply(this, args);
+          } catch (e) {
+            console.error('[DIAG] showPopup THREW:', e);
+            throw e;
+          }
+        };
+        console.warn('[DIAG] showPopup wrapper installed');
+      } else {
+        console.warn('[DIAG] showPopup NOT FOUND on window');
+      }
+
+      // Listen for unhandled errors
+      window.addEventListener('error', (e) => {
+        console.error('[DIAG] Uncaught error:', e.message, 'at', e.filename, ':', e.lineno);
+      });
+
+      // Listen for unhandled promise rejections
+      window.addEventListener('unhandledrejection', (e) => {
+        console.error('[DIAG] Unhandled rejection:', String(e.reason));
+      });
+    });
+
+    // Upgrade console handler to capture ALL levels (not just error/warn)
+    const diagConsoleHandler = (msg: import('rebrowser-puppeteer-core').ConsoleMessage) => {
+      const text = msg.text();
+      if (text.includes('[DIAG]')) {
+        logger.warn({ browserLog: text }, 'Browser diagnostic log');
+      }
+    };
+    page.on('console', diagConsoleHandler);
+
     await page.evaluate(() => {
       const button = document.querySelector('#submitDealQuery');
       if (button) {
@@ -1894,6 +1952,7 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
     page.off('response', responseHandler);
     page.off('requestfailed', requestFailedHandler);
     page.off('console', consoleHandler);
+    page.off('console', diagConsoleHandler);
 
     // Stop Turnstile monitor if still running
     if (turnstileMonitorTimer) clearInterval(turnstileMonitorTimer);
