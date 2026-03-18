@@ -32,6 +32,21 @@ async function takeScreenshot(page: Page, label: string): Promise<void> {
   }
 }
 
+// Always-on screenshot for errors/timeouts — works even in production
+async function takeErrorScreenshot(page: Page, label: string): Promise<void> {
+  try {
+    await fs.mkdir(SCREENSHOT_DIR, { recursive: true });
+    const idx = String(++screenshotCounter).padStart(3, '0');
+    const safeLabel = label.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+    const filename = `${idx}_ERROR_${safeLabel}.png`;
+    const filepath = path.join(SCREENSHOT_DIR, filename);
+    await page.screenshot({ path: filepath });
+    logger.info({ filename }, 'Error screenshot saved');
+  } catch (err) {
+    logger.warn({ label, err: (err as Error).message }, 'Error screenshot failed');
+  }
+}
+
 const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
@@ -445,6 +460,39 @@ async function recoverDealsPage(
   await delay(2000);
   logger.debug('Recovery: Amazon.it domain selected');
 
+  // Select Italian language (critical — without this, categories are in English)
+  try {
+    const italianSelected = await newPage.evaluate(() => {
+      const italianFlag = document.querySelector('img[rel="language"][setting="8"]');
+      if (italianFlag) {
+        (italianFlag as HTMLElement).click();
+        return true;
+      }
+      return false;
+    });
+    if (italianSelected) {
+      logger.info('Recovery: Italian language selected');
+      await delay(4000);
+    } else {
+      const altSelected = await newPage.evaluate(() => {
+        const langIt = document.getElementById('lang_it');
+        if (langIt) {
+          langIt.click();
+          return true;
+        }
+        return false;
+      });
+      if (altSelected) {
+        logger.info('Recovery: Italian language selected (alternative method)');
+        await delay(4000);
+      } else {
+        logger.warn('Recovery: Italian language option not found');
+      }
+    }
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, 'Recovery: error selecting Italian language');
+  }
+
   // Navigate to deals page
   await newPage.goto('https://keepa.com/#!deals', { waitUntil: 'networkidle2', timeout: 60000 });
 
@@ -693,11 +741,11 @@ async function setCheckboxById(
         if (!checkbox) return 'not-found';
         if (checkbox.checked === shouldBeChecked) return 'already-correct';
         checkbox.click();
-      return 'toggled';
-    },
-    checkboxId,
-    desired
-  ),
+        return 'toggled';
+      },
+      checkboxId,
+      desired
+    ),
     15_000,
     `setCheckboxById(${checkboxId})`
   );
@@ -825,6 +873,7 @@ async function scrapeAllCategories(
     // Recover if the main deals page session died
     if (mainPageClosed || !(await isPageAlive(activePage))) {
       logger.error('Main page session died — attempting recovery');
+      await takeErrorScreenshot(activePage, 'main_page_died').catch(() => {});
       try {
         // Close old browser (process may already be dead — ignore errors)
         await closeBrowserSafely(activeBrowser);
@@ -893,7 +942,24 @@ async function scrapeAllCategories(
       );
 
       if (!clicked) {
-        logger.warn({ category: categoryName }, 'Category link not found');
+        // Dump available category texts for diagnostics
+        const availableCategories = await evalWithTimeout(() =>
+          activePage.evaluate(() => {
+            const fc = document.getElementById('filterCats');
+            if (!fc) return { filterCatsExists: false, texts: [] as string[] };
+            const links = Array.from(fc.querySelectorAll('a[rel]'));
+            const texts = links
+              .map(a => a.textContent?.trim() ?? '')
+              .filter(t => t.length > 0 && !t.includes('\uf00d'))
+              .slice(0, 8);
+            return { filterCatsExists: true, texts };
+          })
+        ).catch(() => ({ filterCatsExists: false, texts: [] as string[] }));
+        logger.warn(
+          { category: categoryName, ...availableCategories },
+          'Category link not found — available categories dumped'
+        );
+        await takeErrorScreenshot(activePage, `pass1_cat_${categoryId}_not_found`);
         continue;
       }
 
@@ -941,7 +1007,7 @@ async function scrapeAllCategories(
 
       if (!productsReady) {
         logger.warn({ category: categoryName }, 'Timeout waiting for products');
-        await takeScreenshot(activePage, `pass1_cat_${categoryId}_timeout`);
+        await takeErrorScreenshot(activePage, `pass1_cat_${categoryId}_timeout`);
         continue;
       }
 
@@ -1287,10 +1353,7 @@ async function scrapeAllCategories(
           // Re-process the same category that failed (decrement index so the
           // for-loop increment brings us back to the same position).
           catIdx--;
-          logger.info(
-            { category: categoryName },
-            'Will retry failed category after recovery'
-          );
+          logger.info({ category: categoryName }, 'Will retry failed category after recovery');
         } catch (recErr) {
           logger.error(
             { err: (recErr as Error).message },
@@ -1329,19 +1392,23 @@ async function collectLowestAsins(page: Page): Promise<Set<string>> {
   let catsAvailable = false;
   const catWaitStart = Date.now();
   while (!catsAvailable && Date.now() - catWaitStart < 30_000) {
-    catsAvailable = await page.evaluate(() => {
-      const fc = document.getElementById('filterCats');
-      if (!fc) return false;
-      return fc.querySelectorAll('a[rel]').length >= 3;
-    }).catch(() => false);
+    catsAvailable = await page
+      .evaluate(() => {
+        const fc = document.getElementById('filterCats');
+        if (!fc) return false;
+        return fc.querySelectorAll('a[rel]').length >= 3;
+      })
+      .catch(() => false);
     if (!catsAvailable) await delay(2000);
   }
 
   if (!catsAvailable) {
-    const catCount = await page.evaluate(() => {
-      const fc = document.getElementById('filterCats');
-      return fc ? fc.querySelectorAll('a[rel]').length : 0;
-    }).catch(() => 0);
+    const catCount = await page
+      .evaluate(() => {
+        const fc = document.getElementById('filterCats');
+        return fc ? fc.querySelectorAll('a[rel]').length : 0;
+      })
+      .catch(() => 0);
     logger.warn(
       { categoryLinks: catCount },
       'Pass 2: #filterCats has no category links — Pass 2 will likely find 0 ASINs'
@@ -1408,7 +1475,23 @@ async function collectLowestAsins(page: Page): Promise<Set<string>> {
       );
 
       if (!clicked) {
-        logger.warn({ category: categoryName }, 'Pass 2: category link not found — skipping');
+        const availableCategories = await evalWithTimeout(() =>
+          page.evaluate(() => {
+            const fc = document.getElementById('filterCats');
+            if (!fc) return { filterCatsExists: false, texts: [] as string[] };
+            const links = Array.from(fc.querySelectorAll('a[rel]'));
+            const texts = links
+              .map(a => a.textContent?.trim() ?? '')
+              .filter(t => t.length > 0 && !t.includes('\uf00d'))
+              .slice(0, 8);
+            return { filterCatsExists: true, texts };
+          })
+        ).catch(() => ({ filterCatsExists: false, texts: [] as string[] }));
+        logger.warn(
+          { category: categoryName, ...availableCategories },
+          'Pass 2: category link not found — available categories dumped'
+        );
+        await takeErrorScreenshot(page, `pass2_cat_${categoryId}_not_found`);
         continue;
       }
 
@@ -1890,7 +1973,8 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
         page.evaluate(() => {
           const productPage = document.querySelector('#productPage0');
           const loadingIcon = document.querySelector('#loadingIcon');
-          const loadingVisible = loadingIcon && (loadingIcon as HTMLElement).style.display !== 'none';
+          const loadingVisible =
+            loadingIcon && (loadingIcon as HTMLElement).style.display !== 'none';
           if (productPage) {
             const hasContent = productPage.innerHTML.trim().length > 50;
             return hasContent && !loadingVisible;
@@ -1917,10 +2001,10 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
           5_000,
           'product page poll status'
         ).catch(() => ({
-            productPageExists: false,
-            productPageLen: 0,
-            loadingDisplay: 'eval-error',
-          }));
+          productPageExists: false,
+          productPageLen: 0,
+          loadingDisplay: 'eval-error',
+        }));
         logger.info({ elapsedSec: elapsed, ...pollState }, 'Polling for products');
       }
 
@@ -1934,7 +2018,7 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       await takeScreenshot(page, 'find_deals_results_ready');
     } else {
       logger.warn('Timeout waiting for products container');
-      await takeScreenshot(page, 'find_deals_results_timeout');
+      await takeErrorScreenshot(page, 'find_deals_results_timeout');
     }
 
     logger.debug('Skipping general page extraction — navigating to categories');
