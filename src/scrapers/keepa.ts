@@ -1656,7 +1656,6 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
     const failedRequests: FailedRequest[] = [];
     const consoleEntries: ConsoleEntry[] = [];
     let checkHumanDetected = false;
-    let turnstileMonitorTimer: ReturnType<typeof setInterval> | undefined;
 
     const requestHandler = (request: import('rebrowser-puppeteer-core').HTTPRequest) => {
       const url = request.url();
@@ -1748,146 +1747,103 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       wsFrames.push({ direction: 'received', ts: Date.now(), len: data.length, snippet: data.slice(0, 200) });
       logger.info({ len: data.length, snippet: data.slice(0, 200) }, 'WS frame RECEIVED');
 
-      // Detect checkHuman challenge and start Turnstile monitoring
+      // Detect checkHuman challenge and attempt automatic resolution
       try {
         const decoded = Buffer.from(data, 'base64').toString('utf-8');
         if (decoded.includes('"checkHuman"') && !checkHumanDetected) {
           checkHumanDetected = true;
-          logger.warn({ decoded: decoded.slice(0, 300) }, 'Keepa checkHuman challenge detected via WebSocket — starting Turnstile monitor');
+          logger.warn({ decoded: decoded.slice(0, 300) }, 'Keepa checkHuman challenge detected — attempting Turnstile resolution');
 
-          const monitorStart = Date.now();
-
-          // Initial snapshot
+          // Automatically resolve the checkHuman challenge
           (async () => {
             try {
               if (!page) return;
               await fs.mkdir(SCREENSHOT_DIR, { recursive: true });
-              await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'checkHuman_t0.png') });
-            } catch { /* page closed */ }
-          })();
+              await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'checkHuman_detected.png') });
 
-          // Monitor Turnstile state every 3 seconds for up to 60 seconds
-          let monitorCount = 0;
-          turnstileMonitorTimer = setInterval(async () => {
-            monitorCount++;
-            if (monitorCount > 20 || !page) {
-              if (turnstileMonitorTimer) clearInterval(turnstileMonitorTimer);
-              return;
-            }
-            try {
-              const elapsed = Math.round((Date.now() - monitorStart) / 1000);
-              const state = await page.evaluate(() => {
+              // Check if Keepa's functions are available
+              const availability = await page.evaluate(() => {
                 const w = window as unknown as Record<string, unknown>;
-                const ts = w.turnstile as { ready?: unknown; render?: unknown; } | undefined;
-
-                // Popup created by isUserHuman()
-                const cfDiv = document.getElementById('cfTurnstile');
-                const tsWidget = document.getElementById('tsWidget');
-                const tsSpinner = document.getElementById('tsSpinner');
-
-                // Turnstile iframe (created by turnstile.render())
-                const tsIframes = [...document.querySelectorAll('iframe[src*="challenges.cloudflare.com"]')];
-                const allIframes = [...document.querySelectorAll('iframe')];
-
-                // Turnstile response input (set when challenge is solved)
-                const responseInput = document.querySelector('[name="cf-turnstile-response"]') as HTMLInputElement | undefined;
-
-                // Divs 290-310px wide (what puppeteer-real-browser's solver looks for)
-                const candidateDivs = [...document.querySelectorAll('div')].filter(d => {
-                  const r = d.getBoundingClientRect();
-                  return r.width >= 290 && r.width <= 310 && d.children.length === 0;
-                });
-
                 return {
-                  turnstileGlobal: !!ts,
-                  turnstileReady: typeof ts?.ready === 'function',
-                  turnstileRender: typeof ts?.render === 'function',
-                  popupExists: !!cfDiv,
-                  popupDisplay: cfDiv ? getComputedStyle(cfDiv).display : 'N/A',
-                  tsWidgetExists: !!tsWidget,
-                  tsWidgetChildCount: tsWidget?.children?.length ?? -1,
-                  tsWidgetHTML: tsWidget?.innerHTML?.slice(0, 300) ?? '',
-                  spinnerVisible: tsSpinner ? getComputedStyle(tsSpinner).display !== 'none' : false,
-                  turnstileIframes: tsIframes.length,
-                  turnstileIframeSrcs: tsIframes.map(f => (f as HTMLIFrameElement).src.slice(0, 100)),
-                  allIframeCount: allIframes.length,
-                  responseToken: responseInput?.value ? responseInput.value.slice(0, 30) + '...' : '',
-                  solverCandidateDivs: candidateDivs.length,
+                  hasIsUserHuman: typeof w.isUserHuman === 'function',
+                  hasShowPopup: typeof w.showPopup === 'function',
+                  hasTurnstile: !!(w.turnstile as { render?: unknown })?.render,
+                  hasNetwork: typeof (w.network as { request?: unknown })?.request === 'function',
+                  hasJQuery: typeof w.$ === 'function',
                 };
               });
-              logger.warn({ elapsed, ...state }, 'Turnstile monitor tick');
+              logger.warn({ ...availability }, 'Keepa globals availability check');
 
-              // Take screenshot at key intervals (3s, 10s, 30s, 60s)
-              if ([1, 3, 10, 20].includes(monitorCount)) {
-                await fs.mkdir(SCREENSHOT_DIR, { recursive: true });
-                await page.screenshot({ path: path.join(SCREENSHOT_DIR, `turnstile_${elapsed}s.png`) });
+              if (!availability.hasIsUserHuman || !availability.hasTurnstile) {
+                logger.error('Cannot resolve checkHuman: missing isUserHuman or turnstile');
+                return;
               }
-            } catch {
-              // page closed or eval error — stop monitoring
-              if (turnstileMonitorTimer) clearInterval(turnstileMonitorTimer);
+
+              // Call isUserHuman() ourselves (Keepa's internal handler doesn't trigger it)
+              // isUserHuman returns a jQuery Deferred, so wrap it in a Promise
+              logger.info('Calling isUserHuman(false, "blocked") from page context...');
+
+              const resolution = await page.evaluate(() => {
+                return new Promise<{ success: boolean; hasToken: boolean; error?: string }>((resolve) => {
+                  const w = window as unknown as Record<string, unknown>;
+                  const isUserHuman = w.isUserHuman as (a: boolean, b: string) => { done: (cb: (token: string) => void) => { fail: (cb: (err: unknown) => void) => void } };
+                  const network = w.network as { request: (opts: Record<string, unknown>) => { done: (cb: (res: unknown) => void) => { fail: (cb: (err: unknown) => void) => void } } };
+
+                  // Set a timeout in case the whole flow hangs
+                  const timeout = setTimeout(() => {
+                    resolve({ success: false, hasToken: false, error: 'isUserHuman timeout (120s)' });
+                  }, 120_000);
+
+                  try {
+                    const deferred = isUserHuman(false, 'blocked');
+                    deferred
+                      .done((token: string) => {
+                        clearTimeout(timeout);
+                        // We got a Turnstile token! Now send it to Keepa's backend
+                        if (network && typeof network.request === 'function') {
+                          network.request({ path: 'turnstile', turnstile: token, isInvisible: false })
+                            .done(() => {
+                              resolve({ success: true, hasToken: true });
+                            })
+                            .fail((err: unknown) => {
+                              resolve({ success: false, hasToken: true, error: `network.request failed: ${String(err)}` });
+                            });
+                        } else {
+                          resolve({ success: false, hasToken: true, error: 'network.request not available' });
+                        }
+                      })
+                      .fail((err: unknown) => {
+                        clearTimeout(timeout);
+                        resolve({ success: false, hasToken: false, error: `isUserHuman failed: ${String(err)}` });
+                      });
+                  } catch (e) {
+                    clearTimeout(timeout);
+                    resolve({ success: false, hasToken: false, error: `isUserHuman threw: ${String(e)}` });
+                  }
+                });
+              });
+
+              logger.warn({ ...resolution }, 'checkHuman resolution result');
+              await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'checkHuman_after_resolution.png') });
+
+              if (resolution.success) {
+                logger.info('checkHuman resolved successfully — retrying deal query');
+                // Re-click "Find Deals" to trigger a fresh deal query
+                await delay(2000);
+                await page.evaluate(() => {
+                  const button = document.querySelector('#submitDealQuery');
+                  if (button) (button as HTMLElement).click();
+                });
+              } else {
+                logger.error({ error: resolution.error }, 'checkHuman resolution failed');
+              }
+            } catch (e) {
+              logger.error({ err: (e as Error).message }, 'Error during checkHuman resolution');
             }
-          }, 3000);
+          })();
         }
       } catch { /* not base64 or not JSON — ignore */ }
     });
-
-    // Inject diagnostic wrappers for Keepa's checkHuman handling functions
-    await page.evaluate(() => {
-      const w = window as unknown as Record<string, unknown>;
-
-      // Wrap isUserHuman to detect if/when it's called
-      const origIsUserHuman = w.isUserHuman as ((...args: unknown[]) => unknown) | undefined;
-      if (typeof origIsUserHuman === 'function') {
-        w.isUserHuman = function (...args: unknown[]) {
-          console.warn('[DIAG] isUserHuman CALLED with args:', JSON.stringify(args));
-          try {
-            return origIsUserHuman.apply(this, args);
-          } catch (e) {
-            console.error('[DIAG] isUserHuman THREW:', e);
-            throw e;
-          }
-        };
-        console.warn('[DIAG] isUserHuman wrapper installed');
-      } else {
-        console.warn('[DIAG] isUserHuman NOT FOUND on window');
-      }
-
-      // Wrap showPopup to detect popup creation
-      const origShowPopup = w.showPopup as ((...args: unknown[]) => unknown) | undefined;
-      if (typeof origShowPopup === 'function') {
-        w.showPopup = function (...args: unknown[]) {
-          console.warn('[DIAG] showPopup CALLED with title:', args[0]);
-          try {
-            return origShowPopup.apply(this, args);
-          } catch (e) {
-            console.error('[DIAG] showPopup THREW:', e);
-            throw e;
-          }
-        };
-        console.warn('[DIAG] showPopup wrapper installed');
-      } else {
-        console.warn('[DIAG] showPopup NOT FOUND on window');
-      }
-
-      // Listen for unhandled errors
-      window.addEventListener('error', (e) => {
-        console.error('[DIAG] Uncaught error:', e.message, 'at', e.filename, ':', e.lineno);
-      });
-
-      // Listen for unhandled promise rejections
-      window.addEventListener('unhandledrejection', (e) => {
-        console.error('[DIAG] Unhandled rejection:', String(e.reason));
-      });
-    });
-
-    // Upgrade console handler to capture ALL levels (not just error/warn)
-    const diagConsoleHandler = (msg: import('rebrowser-puppeteer-core').ConsoleMessage) => {
-      const text = msg.text();
-      if (text.includes('[DIAG]')) {
-        logger.warn({ browserLog: text }, 'Browser diagnostic log');
-      }
-    };
-    page.on('console', diagConsoleHandler);
 
     await page.evaluate(() => {
       const button = document.querySelector('#submitDealQuery');
@@ -1952,10 +1908,6 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
     page.off('response', responseHandler);
     page.off('requestfailed', requestFailedHandler);
     page.off('console', consoleHandler);
-    page.off('console', diagConsoleHandler);
-
-    // Stop Turnstile monitor if still running
-    if (turnstileMonitorTimer) clearInterval(turnstileMonitorTimer);
 
     // Stop CDP WebSocket monitoring
     await cdpSession.detach().catch(() => {});
