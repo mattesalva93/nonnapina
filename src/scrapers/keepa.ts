@@ -669,9 +669,8 @@ async function scrapeAllCategories(
   let activePage = page;
   let activeBrowser = browser;
 
-  // Create a dedicated page for product detail extraction.
-  // This avoids the fragile click+goBack pattern on the main deals page,
-  // which crashes the browser session after heavy DOM manipulation.
+  // Detail page created on demand per product and closed after each extraction
+  // to prevent memory/DOM bloat from accumulating SPA state.
   let detailPage: Page | undefined;
   let detailPageInitialized = false;
   let mainPageClosed = false;
@@ -684,20 +683,6 @@ async function scrapeAllCategories(
     });
   };
   attachCloseListener(activePage);
-
-  try {
-    detailPage = await activeBrowser.newPage();
-    await detailPage.setViewport({ width: 1280, height: 800 });
-    await detailPage.setUserAgent(
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    );
-    logger.info('Detail page created for product extraction');
-  } catch (err) {
-    logger.warn(
-      { err: (err as Error).message },
-      'Could not create detail page — reviews will be skipped'
-    );
-  }
 
   for (const categoryId of config.keepa.categories) {
     const categoryName = CATEGORY_NAMES[categoryId];
@@ -722,20 +707,7 @@ async function scrapeAllCategories(
         mainPageClosed = false;
         attachCloseListener(activePage);
 
-        // Re-create detail page on the new browser
-        try {
-          detailPage = await activeBrowser.newPage();
-          await detailPage.setViewport({ width: 1280, height: 800 });
-          await detailPage.setUserAgent(
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-          );
-          logger.info('Detail page re-created after recovery');
-        } catch (err) {
-          logger.warn(
-            { err: (err as Error).message },
-            'Could not create detail page after recovery'
-          );
-        }
+        // Detail page will be re-created on demand per product
       } catch (err) {
         logger.error(
           { err: (err as Error).message },
@@ -965,9 +937,26 @@ async function scrapeAllCategories(
             'Processing product'
           );
 
-          // Extract review data using the dedicated detail page (isolated tab).
-          // This avoids click+goBack on the main deals page which causes session crashes.
+          // Extract review data using a dedicated detail page (isolated tab).
+          // A fresh page is created per product to prevent memory bloat from
+          // accumulating SPA state across many hash navigations.
           let reviewData: ReviewData = { rating: undefined, reviewCount: undefined };
+
+          if (!detailPage) {
+            try {
+              detailPage = await activeBrowser.newPage();
+              await detailPage.setViewport({ width: 1280, height: 800 });
+              await detailPage.setUserAgent(
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+              );
+            } catch (err) {
+              logger.warn(
+                { err: (err as Error).message },
+                'Could not create detail page — skipping review extraction'
+              );
+              detailPage = undefined;
+            }
+          }
 
           if (detailPage) {
             try {
@@ -1063,14 +1052,17 @@ async function scrapeAllCategories(
               ]);
             } catch (err) {
               logger.warn({ asin, err: (err as Error).message }, 'Detail page extraction failed');
-              // If the page is stuck, try to recover by navigating away
-              try {
-                await detailPage.goto('about:blank', { timeout: 5000 }).catch(() => undefined);
-                detailPageInitialized = false;
-              } catch {
-                // ignore recovery failure
-              }
             }
+
+            // Close the detail page after every product to release memory and
+            // prevent DOM bloat from accumulating across many SPA navigations.
+            try {
+              await detailPage.close();
+            } catch {
+              // already closed
+            }
+            detailPage = undefined;
+            detailPageInitialized = false;
           }
 
           const productData: KeepaProduct = {
@@ -1115,18 +1107,6 @@ async function scrapeAllCategories(
       for (const product of categoryProducts) {
         if (!products.find(p => p.asin === product.asin)) {
           products.push(product);
-        }
-      }
-
-      // Navigate detail page away from keepa.com between categories to avoid
-      // cross-page SPA interference that can crash the main deals page.
-      if (detailPage) {
-        try {
-          await detailPage.goto('about:blank', { timeout: 5000 }).catch(() => undefined);
-          detailPageInitialized = false;
-          logger.debug('Detail page reset to about:blank between categories');
-        } catch {
-          // ignore — detail page may already be dead
         }
       }
 
@@ -1179,33 +1159,49 @@ async function collectLowestAsins(page: Page): Promise<Set<string>> {
     }
 
     try {
-      // Capture first visible ASIN BEFORE category click to detect stale DOM
-      const previousFirstAsin = await page.evaluate(() => {
-        const container = document.getElementById('p0');
-        if (!container) return '';
-        const link = container.querySelector(':scope > a[href*="#!product/"]');
-        if (!link) return '';
-        const href = link.getAttribute('href') ?? '';
-        const m = href.match(/#!product\/\d+-([A-Z0-9]{10})/);
-        return m ? m[1] : '';
-      });
+      // Wrap page.evaluate calls with a local timeout guard so that a single
+      // protocolTimeout (2 min) doesn't kill the entire Pass 2 — we simply
+      // skip the category and move on to the next one.
+      const evalWithTimeout = async <T>(fn: () => Promise<T>, timeoutMs = 30_000): Promise<T> => {
+        return Promise.race([
+          fn(),
+          new Promise<T>((_, reject) =>
+            setTimeout(() => reject(new Error('Pass 2 evaluate timeout')), timeoutMs)
+          ),
+        ]);
+      };
 
-      const clicked = await page.evaluate((targetCategory: string) => {
-        const links = Array.from(document.querySelectorAll('a'));
-        const categoryLink = links.find(link => {
-          const text = link.textContent?.trim() ?? '';
-          return text === targetCategory || text.includes(targetCategory);
-        });
-        if (categoryLink) {
-          (categoryLink as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'center' });
-          (categoryLink as HTMLElement).click();
-          return true;
-        }
-        return false;
-      }, categoryName);
+      // Capture first visible ASIN BEFORE category click to detect stale DOM
+      const previousFirstAsin = await evalWithTimeout(() =>
+        page.evaluate(() => {
+          const container = document.getElementById('p0');
+          if (!container) return '';
+          const link = container.querySelector(':scope > a[href*="#!product/"]');
+          if (!link) return '';
+          const href = link.getAttribute('href') ?? '';
+          const m = href.match(/#!product\/\d+-([A-Z0-9]{10})/);
+          return m ? m[1] : '';
+        })
+      );
+
+      const clicked = await evalWithTimeout(() =>
+        page.evaluate((targetCategory: string) => {
+          const links = Array.from(document.querySelectorAll('a'));
+          const categoryLink = links.find(link => {
+            const text = link.textContent?.trim() ?? '';
+            return text === targetCategory || text.includes(targetCategory);
+          });
+          if (categoryLink) {
+            (categoryLink as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'center' });
+            (categoryLink as HTMLElement).click();
+            return true;
+          }
+          return false;
+        }, categoryName)
+      );
 
       if (!clicked) {
-        logger.warn({ category: categoryName }, 'Pass 2: category link not found');
+        logger.debug({ category: categoryName }, 'Pass 2: category link not found — skipping');
         continue;
       }
 
@@ -1217,25 +1213,27 @@ async function collectLowestAsins(page: Page): Promise<Set<string>> {
       const start = Date.now();
 
       while (!ready && Date.now() - start < maxWait) {
-        ready = await page.evaluate((prevAsin: string) => {
-          const productPage = document.querySelector('#productPage0');
-          const loadingIcon = document.querySelector('#loadingIcon');
-          const isLoading = loadingIcon && (loadingIcon as HTMLElement).style.display !== 'none';
-          if (isLoading) return false;
-          if (!productPage || productPage.innerHTML.trim().length <= 50) return false;
-          if (prevAsin) {
-            const container = document.getElementById('p0');
-            if (container) {
-              const link = container.querySelector(':scope > a[href*="#!product/"]');
-              if (link) {
-                const href = link.getAttribute('href') ?? '';
-                const m = href.match(/#!product\/\d+-([A-Z0-9]{10})/);
-                if (m && m[1] === prevAsin) return false;
+        ready = await evalWithTimeout(() =>
+          page.evaluate((prevAsin: string) => {
+            const productPage = document.querySelector('#productPage0');
+            const loadingIcon = document.querySelector('#loadingIcon');
+            const isLoading = loadingIcon && (loadingIcon as HTMLElement).style.display !== 'none';
+            if (isLoading) return false;
+            if (!productPage || productPage.innerHTML.trim().length <= 50) return false;
+            if (prevAsin) {
+              const container = document.getElementById('p0');
+              if (container) {
+                const link = container.querySelector(':scope > a[href*="#!product/"]');
+                if (link) {
+                  const href = link.getAttribute('href') ?? '';
+                  const m = href.match(/#!product\/\d+-([A-Z0-9]{10})/);
+                  if (m && m[1] === prevAsin) return false;
+                }
               }
             }
-          }
-          return true;
-        }, previousFirstAsin);
+            return true;
+          }, previousFirstAsin)
+        );
         if (!ready) await delay(checkInt);
       }
 
@@ -1246,33 +1244,35 @@ async function collectLowestAsins(page: Page): Promise<Set<string>> {
       }
 
       // Extract just ASINs from visible product containers — no clicking needed
-      const asins: string[] = await page.evaluate(() => {
-        const result: string[] = [];
-        const seen = new Set<string>();
-        let idx = 0;
-        let misses = 0;
+      const asins: string[] = await evalWithTimeout(() =>
+        page.evaluate(() => {
+          const result: string[] = [];
+          const seen = new Set<string>();
+          let idx = 0;
+          let misses = 0;
 
-        while (misses < 5) {
-          const container = document.getElementById(`p${idx}`);
-          if (!container) {
-            misses++;
-            idx++;
-            continue;
-          }
-          misses = 0;
-          const link = container.querySelector(':scope > a[href*="#!product/"]');
-          if (link) {
-            const href = link.getAttribute('href') ?? '';
-            const m = href.match(/#!product\/\d+-([A-Z0-9]{10})/);
-            if (m && m[1] && !seen.has(m[1])) {
-              seen.add(m[1]);
-              result.push(m[1]);
+          while (misses < 5) {
+            const container = document.getElementById(`p${idx}`);
+            if (!container) {
+              misses++;
+              idx++;
+              continue;
             }
+            misses = 0;
+            const link = container.querySelector(':scope > a[href*="#!product/"]');
+            if (link) {
+              const href = link.getAttribute('href') ?? '';
+              const m = href.match(/#!product\/\d+-([A-Z0-9]{10})/);
+              if (m && m[1] && !seen.has(m[1])) {
+                seen.add(m[1]);
+                result.push(m[1]);
+              }
+            }
+            idx++;
           }
-          idx++;
-        }
-        return result;
-      });
+          return result;
+        })
+      );
 
       for (const asin of asins) allLowestAsins.add(asin);
       logger.info(
