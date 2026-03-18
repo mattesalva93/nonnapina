@@ -752,29 +752,33 @@ async function scrapeAllCategories(
     try {
       // Capture the first ASIN currently visible BEFORE the category click,
       // so we can detect when the SPA actually swaps content after the click.
-      const previousFirstAsin = await evalWithTimeout(() => activePage.evaluate(() => {
-        const firstContainer = document.getElementById('p0');
-        if (!firstContainer) return '';
-        const link = firstContainer.querySelector(':scope > a[href*="#!product/"]');
-        if (!link) return '';
-        const href = link.getAttribute('href') ?? '';
-        const m = href.match(/#!product\/\d+-([A-Z0-9]{10})/);
-        return m ? m[1] : '';
-      }));
+      const previousFirstAsin = await evalWithTimeout(() =>
+        activePage.evaluate(() => {
+          const firstContainer = document.getElementById('p0');
+          if (!firstContainer) return '';
+          const link = firstContainer.querySelector(':scope > a[href*="#!product/"]');
+          if (!link) return '';
+          const href = link.getAttribute('href') ?? '';
+          const m = href.match(/#!product\/\d+-([A-Z0-9]{10})/);
+          return m ? m[1] : '';
+        })
+      );
 
-      const clicked = await evalWithTimeout(() => activePage.evaluate((targetCategory: string) => {
-        const links = Array.from(document.querySelectorAll('a'));
-        const categoryLink = links.find(link => {
-          const text = link.textContent?.trim() ?? '';
-          return text === targetCategory || text.includes(targetCategory);
-        });
-        if (categoryLink) {
-          (categoryLink as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'center' });
-          (categoryLink as HTMLElement).click();
-          return true;
-        }
-        return false;
-      }, categoryName));
+      const clicked = await evalWithTimeout(() =>
+        activePage.evaluate((targetCategory: string) => {
+          const links = Array.from(document.querySelectorAll('a'));
+          const categoryLink = links.find(link => {
+            const text = link.textContent?.trim() ?? '';
+            return text === targetCategory || text.includes(targetCategory);
+          });
+          if (categoryLink) {
+            (categoryLink as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'center' });
+            (categoryLink as HTMLElement).click();
+            return true;
+          }
+          return false;
+        }, categoryName)
+      );
 
       if (!clicked) {
         logger.warn({ category: categoryName }, 'Category link not found');
@@ -791,30 +795,32 @@ async function scrapeAllCategories(
       const start = Date.now();
 
       while (!productsReady && Date.now() - start < maxWait) {
-        productsReady = await evalWithTimeout(() => activePage.evaluate((prevAsin: string) => {
-          const productPage = document.querySelector('#productPage0');
-          const loadingIcon = document.querySelector('#loadingIcon');
-          const isLoading = loadingIcon && (loadingIcon as HTMLElement).style.display !== 'none';
-          if (isLoading) return false;
-          if (!productPage || productPage.innerHTML.trim().length <= 50) return false;
+        productsReady = await evalWithTimeout(() =>
+          activePage.evaluate((prevAsin: string) => {
+            const productPage = document.querySelector('#productPage0');
+            const loadingIcon = document.querySelector('#loadingIcon');
+            const isLoading = loadingIcon && (loadingIcon as HTMLElement).style.display !== 'none';
+            if (isLoading) return false;
+            if (!productPage || productPage.innerHTML.trim().length <= 50) return false;
 
-          // If we had a previous ASIN, wait until the page content actually changes
-          if (prevAsin) {
-            const firstContainer = document.getElementById('p0');
-            if (firstContainer) {
-              const link = firstContainer.querySelector(':scope > a[href*="#!product/"]');
-              if (link) {
-                const href = link.getAttribute('href') ?? '';
-                const m = href.match(/#!product\/\d+-([A-Z0-9]{10})/);
-                const currentFirst = m ? m[1] : '';
-                // Content hasn't changed yet — keep waiting
-                if (currentFirst === prevAsin) return false;
+            // If we had a previous ASIN, wait until the page content actually changes
+            if (prevAsin) {
+              const firstContainer = document.getElementById('p0');
+              if (firstContainer) {
+                const link = firstContainer.querySelector(':scope > a[href*="#!product/"]');
+                if (link) {
+                  const href = link.getAttribute('href') ?? '';
+                  const m = href.match(/#!product\/\d+-([A-Z0-9]{10})/);
+                  const currentFirst = m ? m[1] : '';
+                  // Content hasn't changed yet — keep waiting
+                  if (currentFirst === prevAsin) return false;
+                }
               }
             }
-          }
 
-          return true;
-        }, previousFirstAsin));
+            return true;
+          }, previousFirstAsin)
+        );
 
         if (!productsReady) {
           await delay(checkInt);
@@ -830,101 +836,103 @@ async function scrapeAllCategories(
       logger.debug({ category: categoryName }, 'Products loaded');
       await takeScreenshot(activePage, `pass1_cat_${categoryId}_loaded`);
 
-      const productLinks = await evalWithTimeout(() => activePage.evaluate(
-        (
-          maxProducts: number
-        ): {
-          asin: string;
-          href: string;
-          discount: number | null;
-          avgPrice: number | null;
-          currentPrice: number | null;
-        }[] => {
-          const links: {
+      const productLinks = await evalWithTimeout(() =>
+        activePage.evaluate(
+          (
+            maxProducts: number
+          ): {
             asin: string;
             href: string;
             discount: number | null;
             avgPrice: number | null;
             currentPrice: number | null;
-          }[] = [];
-          const seen = new Set<string>();
+          }[] => {
+            const links: {
+              asin: string;
+              href: string;
+              discount: number | null;
+              avgPrice: number | null;
+              currentPrice: number | null;
+            }[] = [];
+            const seen = new Set<string>();
 
-          let containerIndex = 0;
-          let consecutiveMisses = 0;
-          const maxConsecutiveMisses = 5;
+            let containerIndex = 0;
+            let consecutiveMisses = 0;
+            const maxConsecutiveMisses = 5;
 
-          while (links.length < maxProducts && consecutiveMisses < maxConsecutiveMisses) {
-            const containerId = `p${containerIndex}`;
-            const container = document.getElementById(containerId);
+            while (links.length < maxProducts && consecutiveMisses < maxConsecutiveMisses) {
+              const containerId = `p${containerIndex}`;
+              const container = document.getElementById(containerId);
 
-            if (!container) {
-              consecutiveMisses++;
+              if (!container) {
+                consecutiveMisses++;
+                containerIndex++;
+                continue;
+              }
+
+              consecutiveMisses = 0;
+
+              const link = container.querySelector(':scope > a[href*="#!product/"]');
+              if (!link) {
+                containerIndex++;
+                continue;
+              }
+
+              const href = link.getAttribute('href');
+              if (!href) {
+                containerIndex++;
+                continue;
+              }
+
+              const match = href.match(/#!product\/\d+-([A-Z0-9]{10})/);
+              if (!match || !match[1]) {
+                containerIndex++;
+                continue;
+              }
+
+              if (seen.has(match[1])) {
+                containerIndex++;
+                continue;
+              }
+
+              const asin = match[1];
+              seen.add(asin);
+
+              let discount: number | null = null;
+              const discountSpan = container.querySelector(
+                'span.productSmallPercent-24, span.productSmallPercent-16'
+              );
+              if (discountSpan) {
+                const discountText = discountSpan.textContent?.trim() ?? '';
+                const discountMatch = discountText.match(/(-?\d+)/);
+                if (discountMatch) discount = parseInt(discountMatch[1]);
+              }
+
+              let avgPrice: number | null = null;
+              let currentPrice: number | null = null;
+              const avgPriceSpan = container.querySelector('span.productPriceTableTdSmallS');
+              if (avgPriceSpan) {
+                const avgText = avgPriceSpan.textContent?.trim() ?? '';
+                const avgMatch = avgText.match(/(\d+[.,]\d+)/);
+                if (avgMatch) avgPrice = parseFloat(avgMatch[1].replace(',', '.'));
+              }
+
+              const currPriceSpan = container.querySelector('span.productPriceTableTdLargeS');
+              if (currPriceSpan) {
+                const currText = currPriceSpan.textContent?.trim() ?? '';
+                const currMatch = currText.match(/(\d+[.,]\d+)/);
+                if (currMatch) currentPrice = parseFloat(currMatch[1].replace(',', '.'));
+              }
+
+              links.push({ asin, href, discount, avgPrice, currentPrice });
               containerIndex++;
-              continue;
             }
 
-            consecutiveMisses = 0;
-
-            const link = container.querySelector(':scope > a[href*="#!product/"]');
-            if (!link) {
-              containerIndex++;
-              continue;
-            }
-
-            const href = link.getAttribute('href');
-            if (!href) {
-              containerIndex++;
-              continue;
-            }
-
-            const match = href.match(/#!product\/\d+-([A-Z0-9]{10})/);
-            if (!match || !match[1]) {
-              containerIndex++;
-              continue;
-            }
-
-            if (seen.has(match[1])) {
-              containerIndex++;
-              continue;
-            }
-
-            const asin = match[1];
-            seen.add(asin);
-
-            let discount: number | null = null;
-            const discountSpan = container.querySelector(
-              'span.productSmallPercent-24, span.productSmallPercent-16'
-            );
-            if (discountSpan) {
-              const discountText = discountSpan.textContent?.trim() ?? '';
-              const discountMatch = discountText.match(/(-?\d+)/);
-              if (discountMatch) discount = parseInt(discountMatch[1]);
-            }
-
-            let avgPrice: number | null = null;
-            let currentPrice: number | null = null;
-            const avgPriceSpan = container.querySelector('span.productPriceTableTdSmallS');
-            if (avgPriceSpan) {
-              const avgText = avgPriceSpan.textContent?.trim() ?? '';
-              const avgMatch = avgText.match(/(\d+[.,]\d+)/);
-              if (avgMatch) avgPrice = parseFloat(avgMatch[1].replace(',', '.'));
-            }
-
-            const currPriceSpan = container.querySelector('span.productPriceTableTdLargeS');
-            if (currPriceSpan) {
-              const currText = currPriceSpan.textContent?.trim() ?? '';
-              const currMatch = currText.match(/(\d+[.,]\d+)/);
-              if (currMatch) currentPrice = parseFloat(currMatch[1].replace(',', '.'));
-            }
-
-            links.push({ asin, href, discount, avgPrice, currentPrice });
-            containerIndex++;
-          }
-
-          return links;
-        },
-        500
-      ));
+            return links;
+          },
+          500
+        )
+      );
 
       const normalizedLinks: RawProductLink[] = productLinks.map(l => ({
         asin: l.asin,
