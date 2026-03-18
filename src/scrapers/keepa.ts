@@ -1745,6 +1745,33 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       const data = params.response.payloadData;
       wsFrames.push({ direction: 'received', ts: Date.now(), len: data.length, snippet: data.slice(0, 200) });
       logger.info({ len: data.length, snippet: data.slice(0, 200) }, 'WS frame RECEIVED');
+
+      // Detect checkHuman challenge and take diagnostic screenshot + HTML dump
+      try {
+        const decoded = Buffer.from(data, 'base64').toString('utf-8');
+        if (decoded.includes('"checkHuman"')) {
+          logger.warn({ decoded: decoded.slice(0, 300) }, 'Keepa checkHuman challenge detected via WebSocket');
+          // Force screenshot + HTML dump even in production for diagnostics
+          (async () => {
+            try {
+              if (!page) return;
+              await fs.mkdir(SCREENSHOT_DIR, { recursive: true });
+              await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'checkHuman_challenge.png') });
+              logger.warn('checkHuman challenge screenshot saved');
+              const html = await page.evaluate(() => document.documentElement.outerHTML);
+              await fs.writeFile(path.join(SCREENSHOT_DIR, 'checkHuman_page.html'), html.slice(0, 50000));
+              logger.warn('checkHuman HTML dump saved (first 50KB)');
+              // Check for visible overlays/iframes
+              const overlayInfo = await page.evaluate(() => {
+                const iframes = [...document.querySelectorAll('iframe')].map(f => ({ src: f.src, w: f.offsetWidth, h: f.offsetHeight, vis: f.style.display !== 'none' }));
+                const overlays = [...document.querySelectorAll('[class*=captcha], [class*=challenge], [id*=captcha], [id*=turnstile], .overlay, .modal')].map(e => ({ tag: e.tagName, cls: e.className, id: e.id, vis: (e as HTMLElement).style.display }));
+                return { iframes, overlays };
+              });
+              logger.warn({ overlayInfo: JSON.stringify(overlayInfo).slice(0, 1000) }, 'checkHuman page overlay analysis');
+            } catch (e) { logger.warn({ err: (e as Error).message }, 'Failed checkHuman diagnostics'); }
+          })();
+        }
+      } catch { /* not base64 or not JSON — ignore */ }
     });
 
     await page.evaluate(() => {
@@ -1753,6 +1780,23 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
         (button as HTMLElement).click();
       }
     });
+
+    // Diagnostic screenshots after click (even in production)
+    setTimeout(async () => {
+      try {
+        if (!page) return;
+        await fs.mkdir(SCREENSHOT_DIR, { recursive: true });
+        await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'after_click_5s.png') });
+        logger.info('Diagnostic screenshot saved: after_click_5s.png');
+      } catch (e) { logger.warn({ err: (e as Error).message }, 'Screenshot after_click_5s failed'); }
+    }, 5000);
+    setTimeout(async () => {
+      try {
+        if (!page) return;
+        await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'after_click_15s.png') });
+        logger.info('Diagnostic screenshot saved: after_click_15s.png');
+      } catch (e) { logger.warn({ err: (e as Error).message }, 'Screenshot after_click_15s failed'); }
+    }, 15000);
 
     logger.debug('Waiting for products container');
 
