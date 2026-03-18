@@ -1627,6 +1627,102 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
     }
 
     logger.info('Clicking Find Deals button');
+
+    // ── Network + console diagnostics: capture everything around the click ──
+    interface CapturedRequest {
+      url: string;
+      method: string;
+      resourceType: string;
+    }
+    interface CapturedResponse {
+      url: string;
+      status: number;
+      statusText: string;
+      bodyLen: number;
+      bodySnippet: string;
+    }
+    interface FailedRequest {
+      url: string;
+      method: string;
+      errorText: string;
+    }
+    interface ConsoleEntry {
+      type: string;
+      text: string;
+    }
+
+    const capturedRequests: CapturedRequest[] = [];
+    const capturedResponses: CapturedResponse[] = [];
+    const failedRequests: FailedRequest[] = [];
+    const consoleEntries: ConsoleEntry[] = [];
+
+    const requestHandler = (request: import('rebrowser-puppeteer-core').HTTPRequest) => {
+      const url = request.url();
+      if (
+        url.includes('keepa.com') &&
+        (url.includes('/api/') || url.includes('deal') || url.includes('query'))
+      ) {
+        capturedRequests.push({
+          url: url.slice(0, 200),
+          method: request.method(),
+          resourceType: request.resourceType(),
+        });
+        logger.info(
+          { url: url.slice(0, 200), method: request.method() },
+          'Keepa API request intercepted'
+        );
+      }
+    };
+
+    const responseHandler = async (response: import('rebrowser-puppeteer-core').HTTPResponse) => {
+      const url = response.url();
+      if (
+        url.includes('keepa.com') &&
+        (url.includes('/api/') || url.includes('deal') || url.includes('query'))
+      ) {
+        try {
+          const body = await response.text().catch(() => '(unreadable)');
+          capturedResponses.push({
+            url: url.slice(0, 200),
+            status: response.status(),
+            statusText: response.statusText(),
+            bodyLen: body.length,
+            bodySnippet: body.slice(0, 300),
+          });
+        } catch {
+          /* response already consumed */
+        }
+      }
+    };
+
+    const requestFailedHandler = (request: import('rebrowser-puppeteer-core').HTTPRequest) => {
+      const url = request.url();
+      if (url.includes('keepa.com')) {
+        const failure = request.failure();
+        failedRequests.push({
+          url: url.slice(0, 200),
+          method: request.method(),
+          errorText: failure?.errorText ?? 'unknown',
+        });
+        logger.warn(
+          { url: url.slice(0, 200), errorText: failure?.errorText },
+          'Keepa request FAILED at network level'
+        );
+      }
+    };
+
+    const consoleHandler = (msg: import('rebrowser-puppeteer-core').ConsoleMessage) => {
+      const type = msg.type();
+      if (type === 'error' || type === 'warn') {
+        consoleEntries.push({ type, text: msg.text().slice(0, 300) });
+      }
+    };
+
+    page.on('request', requestHandler);
+    page.on('response', responseHandler);
+    page.on('requestfailed', requestFailedHandler);
+    page.on('console', consoleHandler);
+
     await page.evaluate(() => {
       const button = document.querySelector('#submitDealQuery');
       if (button) {
@@ -1643,7 +1739,6 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
 
     while (!productPageReady && Date.now() - startTime < maxWaitTime) {
       const elapsed = Math.round((Date.now() - startTime) / 1000);
-      logger.debug({ elapsedSec: elapsed }, 'Polling for products');
 
       productPageReady = await page.evaluate(() => {
         const productPage = document.querySelector('#productPage0');
@@ -1656,9 +1751,59 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
         return false;
       });
 
+      // Log progress every 15s at info level
+      const now = Date.now();
+      if (!productPageReady && now - startTime > 0 && elapsed % 15 === 0 && elapsed > 0) {
+        const pollState = await page
+          .evaluate(() => {
+            const pp = document.querySelector('#productPage0');
+            const li = document.querySelector('#loadingIcon');
+            return {
+              productPageExists: !!pp,
+              productPageLen: pp?.innerHTML?.trim()?.length ?? 0,
+              loadingDisplay: li ? (li as HTMLElement).style.display : '(not found)',
+            };
+          })
+          .catch(() => ({
+            productPageExists: false,
+            productPageLen: 0,
+            loadingDisplay: 'eval-error',
+          }));
+        logger.info({ elapsedSec: elapsed, ...pollState }, 'Polling for products');
+      }
+
       if (!productPageReady) {
         await delay(checkInterval);
       }
+    }
+
+    // Stop intercepting
+    page.off('request', requestHandler);
+    page.off('response', responseHandler);
+    page.off('requestfailed', requestFailedHandler);
+    page.off('console', consoleHandler);
+
+    // ── Diagnostic summary ──
+    logger.info(
+      {
+        requestsOut: capturedRequests.length,
+        responsesBack: capturedResponses.length,
+        failedRequests: failedRequests.length,
+        consoleErrors: consoleEntries.length,
+      },
+      'Find Deals network diagnostics summary'
+    );
+    for (const r of capturedRequests) {
+      logger.info(r, 'Keepa API request sent');
+    }
+    for (const r of capturedResponses) {
+      logger.info(r, 'Keepa API response received');
+    }
+    for (const r of failedRequests) {
+      logger.warn(r, 'Keepa request failed');
+    }
+    for (const e of consoleEntries) {
+      logger.warn(e, 'Browser console error/warning during Find Deals');
     }
 
     if (productPageReady) {

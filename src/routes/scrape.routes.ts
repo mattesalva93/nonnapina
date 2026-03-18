@@ -89,12 +89,63 @@ scrapeRouter.post('/', async (_req, res, next) => {
   }
 });
 
+const MAX_SCRAPE_ATTEMPTS = 3;
+const SCRAPE_RETRY_BASE_DELAY_MS = 30_000; // 30s, 60s between attempts
+
+export function isRetryableScrapeError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const msg = error.message.toLowerCase();
+  return (
+    msg.includes('protocoltimeout') ||
+    msg.includes('timed out') ||
+    msg.includes('timeout') ||
+    msg.includes('browser') ||
+    msg.includes('target closed') ||
+    msg.includes('session closed') ||
+    msg.includes('not responsive') ||
+    msg.includes('websocket') ||
+    msg.includes('runtime.callfunctionon')
+  );
+}
+
 export async function runScrapeJob(scrapeRunId: string): Promise<void> {
   logger.info({ scrapeRunId }, 'Scrape job started');
 
   try {
-    // Step 1: Scrape Keepa
-    const { products: keepaProducts, lowestAsins } = await scrapeKeepaDeals();
+    // Step 1: Scrape Keepa — with full-scrape retry for transient browser failures
+    let keepaProducts: Awaited<ReturnType<typeof scrapeKeepaDeals>>['products'] = [];
+    let lowestAsins = new Set<string>();
+
+    for (let attempt = 1; attempt <= MAX_SCRAPE_ATTEMPTS; attempt++) {
+      try {
+        const result = await scrapeKeepaDeals();
+        keepaProducts = result.products;
+        lowestAsins = result.lowestAsins;
+        if (attempt > 1) {
+          logger.info({ scrapeRunId, attempt }, 'Scrape succeeded on retry');
+        }
+        break;
+      } catch (scrapeError) {
+        if (attempt < MAX_SCRAPE_ATTEMPTS && isRetryableScrapeError(scrapeError)) {
+          const waitMs = SCRAPE_RETRY_BASE_DELAY_MS * attempt;
+          logger.warn(
+            {
+              scrapeRunId,
+              attempt,
+              maxAttempts: MAX_SCRAPE_ATTEMPTS,
+              err: (scrapeError as Error).message,
+              retryInSec: waitMs / 1000,
+            },
+            'Scrape attempt failed with retryable error — will retry'
+          );
+          await new Promise(resolve => setTimeout(resolve, waitMs));
+          continue;
+        }
+        // Non-retryable or last attempt — rethrow
+        throw scrapeError;
+      }
+    }
+
     logger.info({ count: keepaProducts.length }, 'Keepa scraping complete');
 
     if (keepaProducts.length === 0) {
