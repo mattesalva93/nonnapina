@@ -1509,6 +1509,25 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       return { products: [], lowestAsins: new Set<string>() };
     }
 
+    // Simulate human mouse movement to trigger Cloudflare Turnstile challenge
+    // resolution. Keepa sends a `checkHuman` WS message that only resolves when
+    // the browser has recorded mouse activity. puppeteer-real-browser's built-in
+    // turnstile solver handles the actual challenge once it renders.
+    logger.info('Simulating mouse movement for Cloudflare challenge resolution');
+    try {
+      for (let i = 0; i < 10; i++) {
+        const x = 100 + Math.random() * 1000;
+        const y = 100 + Math.random() * 600;
+        await page.mouse.move(x, y, { steps: 5 });
+        await delay(200 + Math.random() * 300);
+      }
+      // Give the Turnstile solver enough time to detect + resolve the challenge
+      await delay(5000);
+      logger.info('Mouse movement complete — Cloudflare challenge should be resolved');
+    } catch (error) {
+      logger.warn({ err: (error as Error).message }, 'Mouse movement failed — proceeding anyway');
+    }
+
     logger.info('Selecting "Amazon" price type filter');
     try {
       const filterClicked = await page.evaluate(() => {
@@ -1628,223 +1647,6 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
 
     logger.info('Clicking Find Deals button');
 
-    // ── Network + console diagnostics: capture everything around the click ──
-    interface CapturedRequest {
-      url: string;
-      method: string;
-      resourceType: string;
-    }
-    interface CapturedResponse {
-      url: string;
-      status: number;
-      statusText: string;
-      bodyLen: number;
-      bodySnippet: string;
-    }
-    interface FailedRequest {
-      url: string;
-      method: string;
-      errorText: string;
-    }
-    interface ConsoleEntry {
-      type: string;
-      text: string;
-    }
-
-    const capturedRequests: CapturedRequest[] = [];
-    const capturedResponses: CapturedResponse[] = [];
-    const failedRequests: FailedRequest[] = [];
-    const consoleEntries: ConsoleEntry[] = [];
-    let checkHumanDetected = false;
-
-    const requestHandler = (request: import('rebrowser-puppeteer-core').HTTPRequest) => {
-      const url = request.url();
-      if (
-        url.includes('keepa.com') &&
-        (url.includes('/api/') || url.includes('deal') || url.includes('query'))
-      ) {
-        capturedRequests.push({
-          url: url.slice(0, 200),
-          method: request.method(),
-          resourceType: request.resourceType(),
-        });
-        logger.info(
-          { url: url.slice(0, 200), method: request.method() },
-          'Keepa API request intercepted'
-        );
-      }
-    };
-
-    const responseHandler = async (response: import('rebrowser-puppeteer-core').HTTPResponse) => {
-      const url = response.url();
-      if (
-        url.includes('keepa.com') &&
-        (url.includes('/api/') || url.includes('deal') || url.includes('query'))
-      ) {
-        try {
-          const body = await response.text().catch(() => '(unreadable)');
-          capturedResponses.push({
-            url: url.slice(0, 200),
-            status: response.status(),
-            statusText: response.statusText(),
-            bodyLen: body.length,
-            bodySnippet: body.slice(0, 300),
-          });
-        } catch {
-          /* response already consumed */
-        }
-      }
-    };
-
-    const requestFailedHandler = (request: import('rebrowser-puppeteer-core').HTTPRequest) => {
-      const url = request.url();
-      if (url.includes('keepa.com')) {
-        const failure = request.failure();
-        failedRequests.push({
-          url: url.slice(0, 200),
-          method: request.method(),
-          errorText: failure?.errorText ?? 'unknown',
-        });
-        logger.warn(
-          { url: url.slice(0, 200), errorText: failure?.errorText },
-          'Keepa request FAILED at network level'
-        );
-      }
-    };
-
-    const consoleHandler = (msg: import('rebrowser-puppeteer-core').ConsoleMessage) => {
-      const type = msg.type();
-      if (type === 'error' || type === 'warn') {
-        consoleEntries.push({ type, text: msg.text().slice(0, 300) });
-      }
-    };
-
-    page.on('request', requestHandler);
-    page.on('response', responseHandler);
-    page.on('requestfailed', requestFailedHandler);
-    page.on('console', consoleHandler);
-
-    // ── CDP WebSocket frame monitoring ──
-    const cdpSession = await page.createCDPSession();
-    await cdpSession.send('Network.enable');
-
-    interface WsFrame {
-      direction: 'sent' | 'received';
-      ts: number;
-      len: number;
-      snippet: string;
-    }
-    const wsFrames: WsFrame[] = [];
-
-    cdpSession.on('Network.webSocketFrameSent', (params: { response: { payloadData: string } }) => {
-      const data = params.response.payloadData;
-      wsFrames.push({ direction: 'sent', ts: Date.now(), len: data.length, snippet: data.slice(0, 200) });
-      logger.info({ len: data.length, snippet: data.slice(0, 200) }, 'WS frame SENT');
-    });
-
-    cdpSession.on('Network.webSocketFrameReceived', (params: { response: { payloadData: string } }) => {
-      const data = params.response.payloadData;
-      wsFrames.push({ direction: 'received', ts: Date.now(), len: data.length, snippet: data.slice(0, 200) });
-      logger.info({ len: data.length, snippet: data.slice(0, 200) }, 'WS frame RECEIVED');
-
-      // Detect checkHuman challenge and attempt automatic resolution
-      try {
-        const decoded = Buffer.from(data, 'base64').toString('utf-8');
-        if (decoded.includes('"checkHuman"') && !checkHumanDetected) {
-          checkHumanDetected = true;
-          logger.warn({ decoded: decoded.slice(0, 300) }, 'Keepa checkHuman challenge detected — attempting Turnstile resolution');
-
-          // Automatically resolve the checkHuman challenge
-          (async () => {
-            try {
-              if (!page) return;
-              await fs.mkdir(SCREENSHOT_DIR, { recursive: true });
-              await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'checkHuman_detected.png') });
-
-              // Check if Keepa's functions are available
-              const availability = await page.evaluate(() => {
-                const w = window as unknown as Record<string, unknown>;
-                return {
-                  hasIsUserHuman: typeof w.isUserHuman === 'function',
-                  hasShowPopup: typeof w.showPopup === 'function',
-                  hasTurnstile: !!(w.turnstile as { render?: unknown })?.render,
-                  hasNetwork: typeof (w.network as { request?: unknown })?.request === 'function',
-                  hasJQuery: typeof w.$ === 'function',
-                };
-              });
-              logger.warn({ ...availability }, 'Keepa globals availability check');
-
-              if (!availability.hasIsUserHuman || !availability.hasTurnstile) {
-                logger.error('Cannot resolve checkHuman: missing isUserHuman or turnstile');
-                return;
-              }
-
-              // Call isUserHuman() ourselves (Keepa's internal handler doesn't trigger it)
-              // isUserHuman returns a jQuery Deferred, so wrap it in a Promise
-              logger.info('Calling isUserHuman(false, "blocked") from page context...');
-
-              const resolution = await page.evaluate(() => {
-                return new Promise<{ success: boolean; hasToken: boolean; error?: string }>((resolve) => {
-                  const w = window as unknown as Record<string, unknown>;
-                  const isUserHuman = w.isUserHuman as (a: boolean, b: string) => { done: (cb: (token: string) => void) => { fail: (cb: (err: unknown) => void) => void } };
-                  const network = w.network as { request: (opts: Record<string, unknown>) => { done: (cb: (res: unknown) => void) => { fail: (cb: (err: unknown) => void) => void } } };
-
-                  // Set a timeout in case the whole flow hangs
-                  const timeout = setTimeout(() => {
-                    resolve({ success: false, hasToken: false, error: 'isUserHuman timeout (120s)' });
-                  }, 120_000);
-
-                  try {
-                    const deferred = isUserHuman(false, 'blocked');
-                    deferred
-                      .done((token: string) => {
-                        clearTimeout(timeout);
-                        // We got a Turnstile token! Now send it to Keepa's backend
-                        if (network && typeof network.request === 'function') {
-                          network.request({ path: 'turnstile', turnstile: token, isInvisible: false })
-                            .done(() => {
-                              resolve({ success: true, hasToken: true });
-                            })
-                            .fail((err: unknown) => {
-                              resolve({ success: false, hasToken: true, error: `network.request failed: ${String(err)}` });
-                            });
-                        } else {
-                          resolve({ success: false, hasToken: true, error: 'network.request not available' });
-                        }
-                      })
-                      .fail((err: unknown) => {
-                        clearTimeout(timeout);
-                        resolve({ success: false, hasToken: false, error: `isUserHuman failed: ${String(err)}` });
-                      });
-                  } catch (e) {
-                    clearTimeout(timeout);
-                    resolve({ success: false, hasToken: false, error: `isUserHuman threw: ${String(e)}` });
-                  }
-                });
-              });
-
-              logger.warn({ ...resolution }, 'checkHuman resolution result');
-              await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'checkHuman_after_resolution.png') });
-
-              if (resolution.success) {
-                logger.info('checkHuman resolved successfully — retrying deal query');
-                // Re-click "Find Deals" to trigger a fresh deal query
-                await delay(2000);
-                await page.evaluate(() => {
-                  const button = document.querySelector('#submitDealQuery');
-                  if (button) (button as HTMLElement).click();
-                });
-              } else {
-                logger.error({ error: resolution.error }, 'checkHuman resolution failed');
-              }
-            } catch (e) {
-              logger.error({ err: (e as Error).message }, 'Error during checkHuman resolution');
-            }
-          })();
-        }
-      } catch { /* not base64 or not JSON — ignore */ }
-    });
-
     await page.evaluate(() => {
       const button = document.querySelector('#submitDealQuery');
       if (button) {
@@ -1855,15 +1657,11 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
     logger.debug('Waiting for products container');
 
     let productPageReady = false;
-    const baseWaitTime = 60000;
+    const maxWaitTime = 60000;
     const checkInterval = 2000;
     const startTime = Date.now();
 
-    while (!productPageReady) {
-      // Extend timeout to 180s when checkHuman is active (Turnstile needs time to resolve)
-      const maxWaitTime = checkHumanDetected ? 180000 : baseWaitTime;
-      if (Date.now() - startTime >= maxWaitTime) break;
-
+    while (!productPageReady && Date.now() - startTime < maxWaitTime) {
       const elapsed = Math.round((Date.now() - startTime) / 1000);
 
       productPageReady = await page.evaluate(() => {
@@ -1901,43 +1699,6 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       if (!productPageReady) {
         await delay(checkInterval);
       }
-    }
-
-    // Stop intercepting
-    page.off('request', requestHandler);
-    page.off('response', responseHandler);
-    page.off('requestfailed', requestFailedHandler);
-    page.off('console', consoleHandler);
-
-    // Stop CDP WebSocket monitoring
-    await cdpSession.detach().catch(() => {});
-
-    // ── Diagnostic summary ──
-    logger.info(
-      {
-        requestsOut: capturedRequests.length,
-        responsesBack: capturedResponses.length,
-        failedRequests: failedRequests.length,
-        consoleErrors: consoleEntries.length,
-        wsFramesSent: wsFrames.filter(f => f.direction === 'sent').length,
-        wsFramesReceived: wsFrames.filter(f => f.direction === 'received').length,
-      },
-      'Find Deals network diagnostics summary'
-    );
-    for (const f of wsFrames) {
-      logger.info(f, `WS frame ${f.direction}`);
-    }
-    for (const r of capturedRequests) {
-      logger.info(r, 'Keepa API request sent');
-    }
-    for (const r of capturedResponses) {
-      logger.info(r, 'Keepa API response received');
-    }
-    for (const r of failedRequests) {
-      logger.warn(r, 'Keepa request failed');
-    }
-    for (const e of consoleEntries) {
-      logger.warn(e, 'Browser console error/warning during Find Deals');
     }
 
     if (productPageReady) {
