@@ -1655,6 +1655,8 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
     const capturedResponses: CapturedResponse[] = [];
     const failedRequests: FailedRequest[] = [];
     const consoleEntries: ConsoleEntry[] = [];
+    let checkHumanDetected = false;
+    let turnstileMonitorTimer: ReturnType<typeof setInterval> | undefined;
 
     const requestHandler = (request: import('rebrowser-puppeteer-core').HTTPRequest) => {
       const url = request.url();
@@ -1746,30 +1748,85 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       wsFrames.push({ direction: 'received', ts: Date.now(), len: data.length, snippet: data.slice(0, 200) });
       logger.info({ len: data.length, snippet: data.slice(0, 200) }, 'WS frame RECEIVED');
 
-      // Detect checkHuman challenge and take diagnostic screenshot + HTML dump
+      // Detect checkHuman challenge and start Turnstile monitoring
       try {
         const decoded = Buffer.from(data, 'base64').toString('utf-8');
-        if (decoded.includes('"checkHuman"')) {
-          logger.warn({ decoded: decoded.slice(0, 300) }, 'Keepa checkHuman challenge detected via WebSocket');
-          // Force screenshot + HTML dump even in production for diagnostics
+        if (decoded.includes('"checkHuman"') && !checkHumanDetected) {
+          checkHumanDetected = true;
+          logger.warn({ decoded: decoded.slice(0, 300) }, 'Keepa checkHuman challenge detected via WebSocket — starting Turnstile monitor');
+
+          const monitorStart = Date.now();
+
+          // Initial snapshot
           (async () => {
             try {
               if (!page) return;
               await fs.mkdir(SCREENSHOT_DIR, { recursive: true });
-              await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'checkHuman_challenge.png') });
-              logger.warn('checkHuman challenge screenshot saved');
-              const html = await page.evaluate(() => document.documentElement.outerHTML);
-              await fs.writeFile(path.join(SCREENSHOT_DIR, 'checkHuman_page.html'), html.slice(0, 50000));
-              logger.warn('checkHuman HTML dump saved (first 50KB)');
-              // Check for visible overlays/iframes
-              const overlayInfo = await page.evaluate(() => {
-                const iframes = [...document.querySelectorAll('iframe')].map(f => ({ src: f.src, w: f.offsetWidth, h: f.offsetHeight, vis: f.style.display !== 'none' }));
-                const overlays = [...document.querySelectorAll('[class*=captcha], [class*=challenge], [id*=captcha], [id*=turnstile], .overlay, .modal')].map(e => ({ tag: e.tagName, cls: e.className, id: e.id, vis: (e as HTMLElement).style.display }));
-                return { iframes, overlays };
-              });
-              logger.warn({ overlayInfo: JSON.stringify(overlayInfo).slice(0, 1000) }, 'checkHuman page overlay analysis');
-            } catch (e) { logger.warn({ err: (e as Error).message }, 'Failed checkHuman diagnostics'); }
+              await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'checkHuman_t0.png') });
+            } catch { /* page closed */ }
           })();
+
+          // Monitor Turnstile state every 3 seconds for up to 60 seconds
+          let monitorCount = 0;
+          turnstileMonitorTimer = setInterval(async () => {
+            monitorCount++;
+            if (monitorCount > 20 || !page) {
+              if (turnstileMonitorTimer) clearInterval(turnstileMonitorTimer);
+              return;
+            }
+            try {
+              const elapsed = Math.round((Date.now() - monitorStart) / 1000);
+              const state = await page.evaluate(() => {
+                const w = window as unknown as Record<string, unknown>;
+                const ts = w.turnstile as { ready?: unknown; render?: unknown; } | undefined;
+
+                // Popup created by isUserHuman()
+                const cfDiv = document.getElementById('cfTurnstile');
+                const tsWidget = document.getElementById('tsWidget');
+                const tsSpinner = document.getElementById('tsSpinner');
+
+                // Turnstile iframe (created by turnstile.render())
+                const tsIframes = [...document.querySelectorAll('iframe[src*="challenges.cloudflare.com"]')];
+                const allIframes = [...document.querySelectorAll('iframe')];
+
+                // Turnstile response input (set when challenge is solved)
+                const responseInput = document.querySelector('[name="cf-turnstile-response"]') as HTMLInputElement | undefined;
+
+                // Divs 290-310px wide (what puppeteer-real-browser's solver looks for)
+                const candidateDivs = [...document.querySelectorAll('div')].filter(d => {
+                  const r = d.getBoundingClientRect();
+                  return r.width >= 290 && r.width <= 310 && d.children.length === 0;
+                });
+
+                return {
+                  turnstileGlobal: !!ts,
+                  turnstileReady: typeof ts?.ready === 'function',
+                  turnstileRender: typeof ts?.render === 'function',
+                  popupExists: !!cfDiv,
+                  popupDisplay: cfDiv ? getComputedStyle(cfDiv).display : 'N/A',
+                  tsWidgetExists: !!tsWidget,
+                  tsWidgetChildCount: tsWidget?.children?.length ?? -1,
+                  tsWidgetHTML: tsWidget?.innerHTML?.slice(0, 300) ?? '',
+                  spinnerVisible: tsSpinner ? getComputedStyle(tsSpinner).display !== 'none' : false,
+                  turnstileIframes: tsIframes.length,
+                  turnstileIframeSrcs: tsIframes.map(f => (f as HTMLIFrameElement).src.slice(0, 100)),
+                  allIframeCount: allIframes.length,
+                  responseToken: responseInput?.value ? responseInput.value.slice(0, 30) + '...' : '',
+                  solverCandidateDivs: candidateDivs.length,
+                };
+              });
+              logger.warn({ elapsed, ...state }, 'Turnstile monitor tick');
+
+              // Take screenshot at key intervals (3s, 10s, 30s, 60s)
+              if ([1, 3, 10, 20].includes(monitorCount)) {
+                await fs.mkdir(SCREENSHOT_DIR, { recursive: true });
+                await page.screenshot({ path: path.join(SCREENSHOT_DIR, `turnstile_${elapsed}s.png`) });
+              }
+            } catch {
+              // page closed or eval error — stop monitoring
+              if (turnstileMonitorTimer) clearInterval(turnstileMonitorTimer);
+            }
+          }, 3000);
         }
       } catch { /* not base64 or not JSON — ignore */ }
     });
@@ -1781,31 +1838,18 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       }
     });
 
-    // Diagnostic screenshots after click (even in production)
-    setTimeout(async () => {
-      try {
-        if (!page) return;
-        await fs.mkdir(SCREENSHOT_DIR, { recursive: true });
-        await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'after_click_5s.png') });
-        logger.info('Diagnostic screenshot saved: after_click_5s.png');
-      } catch (e) { logger.warn({ err: (e as Error).message }, 'Screenshot after_click_5s failed'); }
-    }, 5000);
-    setTimeout(async () => {
-      try {
-        if (!page) return;
-        await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'after_click_15s.png') });
-        logger.info('Diagnostic screenshot saved: after_click_15s.png');
-      } catch (e) { logger.warn({ err: (e as Error).message }, 'Screenshot after_click_15s failed'); }
-    }, 15000);
-
     logger.debug('Waiting for products container');
 
     let productPageReady = false;
-    const maxWaitTime = 60000;
+    const baseWaitTime = 60000;
     const checkInterval = 2000;
     const startTime = Date.now();
 
-    while (!productPageReady && Date.now() - startTime < maxWaitTime) {
+    while (!productPageReady) {
+      // Extend timeout to 180s when checkHuman is active (Turnstile needs time to resolve)
+      const maxWaitTime = checkHumanDetected ? 180000 : baseWaitTime;
+      if (Date.now() - startTime >= maxWaitTime) break;
+
       const elapsed = Math.round((Date.now() - startTime) / 1000);
 
       productPageReady = await page.evaluate(() => {
@@ -1850,6 +1894,9 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
     page.off('response', responseHandler);
     page.off('requestfailed', requestFailedHandler);
     page.off('console', consoleHandler);
+
+    // Stop Turnstile monitor if still running
+    if (turnstileMonitorTimer) clearInterval(turnstileMonitorTimer);
 
     // Stop CDP WebSocket monitoring
     await cdpSession.detach().catch(() => {});
