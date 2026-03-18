@@ -162,9 +162,14 @@ const CATEGORY_NAMES: Record<string, string> = {
   28: 'Amazon Luxury',
 };
 
-async function isPageAlive(page: Page): Promise<boolean> {
+async function isPageAlive(page: Page, timeoutMs = 10_000): Promise<boolean> {
   try {
-    await page.evaluate(() => document.title);
+    await Promise.race([
+      page.evaluate(() => document.title),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('isPageAlive timeout')), timeoutMs)
+      ),
+    ]);
     return true;
   } catch {
     return false;
@@ -373,7 +378,22 @@ async function recoverDealsPage(
 
   // Navigate to deals page
   await newPage.goto('https://keepa.com/#!deals', { waitUntil: 'networkidle2', timeout: 60000 });
-  await delay(5000);
+
+  // Simulate mouse movement for Cloudflare Turnstile — same as main flow.
+  // Without this, the deals UI may appear ready (#submitDealQuery exists) but
+  // the filter panels won't render, causing recovery to fail.
+  try {
+    for (let i = 0; i < 15; i++) {
+      const x = 100 + Math.random() * 1000;
+      const y = 100 + Math.random() * 600;
+      await newPage.mouse.move(x, y, { steps: 5 });
+      await delay(200 + Math.random() * 300);
+    }
+    await delay(8000);
+    logger.debug('Recovery: mouse movement complete');
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, 'Recovery: mouse movement failed');
+  }
 
   // Wait for the deals UI (handles Cloudflare transparently)
   await waitForDealsUI(newPage, 'recovery');
@@ -719,10 +739,20 @@ async function scrapeAllCategories(
 
     logger.info({ category: categoryName, categoryId }, 'Processing category');
 
+    // Soft timeout wrapper — catches slow page.evaluate() calls well before the
+    // 120s protocolTimeout can kill the CDP connection.
+    const evalWithTimeout = async <T>(fn: () => Promise<T>, timeoutMs = 30_000): Promise<T> =>
+      Promise.race([
+        fn(),
+        new Promise<T>((_, reject) =>
+          setTimeout(() => reject(new Error('Pass 1 evaluate timeout')), timeoutMs)
+        ),
+      ]);
+
     try {
       // Capture the first ASIN currently visible BEFORE the category click,
       // so we can detect when the SPA actually swaps content after the click.
-      const previousFirstAsin = await activePage.evaluate(() => {
+      const previousFirstAsin = await evalWithTimeout(() => activePage.evaluate(() => {
         const firstContainer = document.getElementById('p0');
         if (!firstContainer) return '';
         const link = firstContainer.querySelector(':scope > a[href*="#!product/"]');
@@ -730,9 +760,9 @@ async function scrapeAllCategories(
         const href = link.getAttribute('href') ?? '';
         const m = href.match(/#!product\/\d+-([A-Z0-9]{10})/);
         return m ? m[1] : '';
-      });
+      }));
 
-      const clicked = await activePage.evaluate((targetCategory: string) => {
+      const clicked = await evalWithTimeout(() => activePage.evaluate((targetCategory: string) => {
         const links = Array.from(document.querySelectorAll('a'));
         const categoryLink = links.find(link => {
           const text = link.textContent?.trim() ?? '';
@@ -744,7 +774,7 @@ async function scrapeAllCategories(
           return true;
         }
         return false;
-      }, categoryName);
+      }, categoryName));
 
       if (!clicked) {
         logger.warn({ category: categoryName }, 'Category link not found');
@@ -761,7 +791,7 @@ async function scrapeAllCategories(
       const start = Date.now();
 
       while (!productsReady && Date.now() - start < maxWait) {
-        productsReady = await activePage.evaluate((prevAsin: string) => {
+        productsReady = await evalWithTimeout(() => activePage.evaluate((prevAsin: string) => {
           const productPage = document.querySelector('#productPage0');
           const loadingIcon = document.querySelector('#loadingIcon');
           const isLoading = loadingIcon && (loadingIcon as HTMLElement).style.display !== 'none';
@@ -784,7 +814,7 @@ async function scrapeAllCategories(
           }
 
           return true;
-        }, previousFirstAsin);
+        }, previousFirstAsin));
 
         if (!productsReady) {
           await delay(checkInt);
@@ -800,7 +830,7 @@ async function scrapeAllCategories(
       logger.debug({ category: categoryName }, 'Products loaded');
       await takeScreenshot(activePage, `pass1_cat_${categoryId}_loaded`);
 
-      const productLinks = await activePage.evaluate(
+      const productLinks = await evalWithTimeout(() => activePage.evaluate(
         (
           maxProducts: number
         ): {
@@ -894,7 +924,7 @@ async function scrapeAllCategories(
           return links;
         },
         500
-      );
+      ));
 
       const normalizedLinks: RawProductLink[] = productLinks.map(l => ({
         asin: l.asin,
@@ -1116,6 +1146,30 @@ async function scrapeAllCategories(
         { category: categoryName, err: (error as Error).message },
         'Category processing failed'
       );
+
+      // After a timeout/error, the page's CDP connection may be poisoned.
+      // Check immediately rather than waiting until the next iteration's
+      // isPageAlive call (which itself could hang for the full protocolTimeout).
+      if (!(await isPageAlive(activePage))) {
+        logger.error('Page died after category error — triggering immediate recovery');
+        try {
+          await closeBrowserSafely(activeBrowser);
+          detailPage = undefined;
+          detailPageInitialized = false;
+
+          const recovered = await recoverDealsPage();
+          activeBrowser = recovered.browser;
+          activePage = recovered.page;
+          mainPageClosed = false;
+          attachCloseListener(activePage);
+        } catch (recErr) {
+          logger.error(
+            { err: (recErr as Error).message },
+            'Immediate recovery failed — aborting category iteration'
+          );
+          break;
+        }
+      }
       continue;
     }
   }
