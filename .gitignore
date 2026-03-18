@@ -39,8 +39,9 @@ desktop.ini
 # ─── Editors ─────────────────────────────────────────────────────
 .idea/
 
-# ─── Playwright ──────────────────────────────────────────────────
-playwright/.cache/
+# ─── Mockup ──────────────────────────────────────────────────
+keepa_mockup_opened_product.html
+keepa_mockup_product_list.html
 
 # ─── Misc ────────────────────────────────────────────────────────
 *.tgz
