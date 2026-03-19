@@ -275,6 +275,19 @@ export async function initWhatsApp(): Promise<void> {
     const message = err instanceof Error ? err.message : String(err);
     const stack = err instanceof Error ? err.stack : undefined;
     logger.error({ err: message, stack }, 'WhatsApp client initialization failed');
+
+    // Transient errors (e.g. "Execution context was destroyed" when WhatsApp
+    // Web reloads mid-injection) are recoverable — retry after a short delay.
+    try {
+      client?.destroy();
+    } catch {
+      // ignore — browser may already be dead
+    }
+    client = undefined;
+    logger.info('Will retry WhatsApp initialization in 15s');
+    setTimeout(() => {
+      void initWhatsApp();
+    }, 15_000);
   }
 }
 
