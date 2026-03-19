@@ -246,6 +246,21 @@ const CATEGORY_NAMES: Record<string, string> = {
   28: 'Amazon Luxury',
 };
 
+const ITALIAN_CATEGORY_MARKERS = [
+  'elettronica', 'bellezza', 'casa e cucina', 'informatica',
+  'fai da te', 'giardino', 'illuminazione', 'sport',
+  'giochi e giocattoli', 'salute', 'prima infanzia',
+];
+
+async function verifyItalianCategories(page: Page): Promise<boolean> {
+  return page.evaluate((markers: string[]) => {
+    const fc = document.getElementById('filterCats');
+    if (!fc) return false;
+    const text = fc.textContent?.toLowerCase() ?? '';
+    return markers.some(m => text.includes(m));
+  }, ITALIAN_CATEGORY_MARKERS);
+}
+
 async function isPageAlive(page: Page, timeoutMs = 10_000): Promise<boolean> {
   try {
     await Promise.race([
@@ -482,6 +497,13 @@ async function recoverDealsPage(
   // Wait for the deals UI (handles Cloudflare transparently)
   await waitForDealsUI(newPage, 'recovery');
 
+  // waitForDealsUI only checks for #submitDealQuery existence. In recovery
+  // it can return almost instantly (~12ms) because the button is in the
+  // initial HTML before the SPA JavaScript has bound event handlers.
+  // Without this delay, clicks on the language selector fire on the DOM
+  // element but the SPA ignores them — causing the UI to stay in English.
+  await delay(5000);
+
   // Select Italian language AFTER deals page is loaded (Keepa is a SPA —
   // language set on the homepage does NOT persist to the deals view).
   try {
@@ -518,18 +540,6 @@ async function recoverDealsPage(
   } catch (err) {
     logger.warn({ err: (err as Error).message }, 'Recovery: error selecting Italian language');
   }
-
-  // Verify language took effect by sampling a category link
-  const langCheck = await newPage.evaluate(() => {
-    const fc = document.getElementById('filterCats');
-    if (!fc) return { filterCatsExists: false, sample: '' };
-    const firstLink = fc.querySelector('a[rel]');
-    return {
-      filterCatsExists: true,
-      sample: firstLink?.textContent?.trim() ?? '',
-    };
-  });
-  logger.info({ ...langCheck }, 'Recovery: language verification (expect Italian category names)');
 
   // Price type filter: Amazon
   await newPage.evaluate(() => {
@@ -629,6 +639,72 @@ async function recoverDealsPage(
       return fc ? fc.querySelectorAll('a[rel]').length : 0;
     });
     logger.info({ categoryLinks: catCount }, 'Recovery: category links loaded');
+  }
+
+  // Verify categories are actually in Italian — if the language click
+  // didn't take effect (SPA timing issue), categories will be in English
+  // and every subsequent category lookup will fail.
+  const isItalian = await verifyItalianCategories(newPage);
+  if (!isItalian) {
+    logger.warn('Recovery: categories are NOT in Italian — retrying language selection');
+    await takeErrorScreenshot(newPage, 'recovery_wrong_language');
+
+    try {
+      const retryClicked = await newPage.evaluate(() => {
+        const flag = document.querySelector('img[rel="language"][setting="8"]');
+        if (flag) { (flag as HTMLElement).click(); return 'flag'; }
+        const langIt = document.getElementById('lang_it');
+        if (langIt) { langIt.click(); return 'lang_it'; }
+        return undefined;
+      });
+
+      if (retryClicked) {
+        logger.info({ method: retryClicked }, 'Recovery: language retry clicked');
+        await delay(5000);
+        await waitForDealsUI(newPage, 'recovery-lang-retry');
+
+        // Re-click Find Deals to refresh results with Italian categories
+        await newPage.evaluate(() => {
+          const btn = document.querySelector('#submitDealQuery');
+          if (btn) (btn as HTMLElement).click();
+        });
+
+        let retryReady = false;
+        const retryStart = Date.now();
+        while (!retryReady && Date.now() - retryStart < 60_000) {
+          retryReady = await newPage.evaluate(() => {
+            const pp = document.querySelector('#productPage0');
+            const li = document.querySelector('#loadingIcon');
+            const loading = li && (li as HTMLElement).style.display !== 'none';
+            return !!pp && pp.innerHTML.trim().length > 50 && !loading;
+          });
+          if (!retryReady) await delay(2000);
+        }
+
+        // Wait for category links to repopulate
+        let retryCats = false;
+        const retryCatStart = Date.now();
+        while (!retryCats && Date.now() - retryCatStart < 30_000) {
+          retryCats = await newPage.evaluate(() => {
+            const fc = document.getElementById('filterCats');
+            if (!fc) return false;
+            return fc.querySelectorAll('a[rel]').length >= 3;
+          });
+          if (!retryCats) await delay(2000);
+        }
+
+        const isItalianNow = await verifyItalianCategories(newPage);
+        if (isItalianNow) {
+          logger.info('Recovery: language corrected on retry');
+        } else {
+          logger.error('Recovery: language STILL not Italian after retry');
+        }
+      }
+    } catch (err) {
+      logger.error({ err: (err as Error).message }, 'Recovery: language retry failed');
+    }
+  } else {
+    logger.info('Recovery: categories confirmed in Italian');
   }
 
   await takeScreenshot(newPage, 'recovery_deals_ready');

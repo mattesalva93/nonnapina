@@ -54,7 +54,7 @@ services:
       - output_data:/app/output
       - whatsapp_session:/app/.wwebjs_auth
     read_only: true
-    shm_size: '1g'
+    shm_size: '2g'
     tmpfs:
       - /tmp:size=256M
       - /home/appuser:size=128M,uid=1001,gid=1001
@@ -77,10 +77,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 3G
-          cpus: '2.0'
+          memory: 5G
+          cpus: '3.0'
         reservations:
-          memory: 512M
+          memory: 1G
           cpus: '0.5'
 
 volumes:
