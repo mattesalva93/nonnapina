@@ -19,11 +19,8 @@ import {
   CATEGORY_NAMES,
   clickCategory,
   clickFindDeals,
-  clickProductOverlay,
-  closeProductOverlay,
   detectMissingCategories,
   extractAsinsOnly,
-  extractProductDetail,
   extractProductLinks,
   getFirstVisibleAsin,
   getLatestScreenshots,
@@ -38,9 +35,13 @@ import {
   waitForCategoryLinks,
   waitForCategorySwitch,
   waitForDealsUI,
-  waitForProductOverlay,
   waitForProducts,
 } from './keepa-page.js';
+import {
+  enrichProducts,
+  setupForProductPages,
+  type ProductPageData,
+} from './keepa-product-page.js';
 
 const logger = createComponentLogger('KeepaService');
 
@@ -115,43 +116,91 @@ async function recoverSession(
   return { browser, page };
 }
 
-// ─── Product scraping with overlay click per product ─────────────────────────
+// ─── Recovery for product page navigation (lighter than full deals setup) ────
 
-async function scrapeProductDetail(
+async function recoverForProductPages(
+  heartbeat: MouseHeartbeat,
+  oldBrowser: Browser | undefined
+): Promise<{ browser: Browser; page: Page }> {
+  logger.info('Starting product-page recovery — fresh browser session');
+  await closeBrowser(oldBrowser);
+
+  const { browser, page } = await launchBrowser();
+  heartbeat.updatePage(page);
+  heartbeat.start(page);
+
+  await setupForProductPages(page);
+
+  logger.info('Product-page recovery complete');
+  return { browser, page };
+}
+
+// ─── Phase 3: enrich products with review data via product page navigation ───
+
+async function enrichWithReviews(
   page: Page,
-  productIndex: number,
-  asin: string
-): Promise<{ rating: number | undefined; reviewCount: number | undefined }> {
-  const clicked = await clickProductOverlay(page, productIndex);
-  if (!clicked) {
-    logger.warn({ asin, index: productIndex }, 'Could not click product overlay');
-    await takeErrorScreenshot(page, `overlay_click_failed_${asin}`);
-    return { rating: undefined, reviewCount: undefined };
-  }
+  browser: Browser,
+  heartbeat: MouseHeartbeat,
+  products: KeepaProduct[]
+): Promise<{ activePage: Page; activeBrowser: Browser }> {
+  const asins = products.map(p => p.asin);
+  let activePage = page;
+  let activeBrowser = browser;
+  const allData = new Map<string, ProductPageData>();
+  let toProcess = [...asins];
+  let retries = 0;
+  const MAX_RETRIES = 2;
 
-  try {
-    const overlayReady = await waitForProductOverlay(page);
-    if (!overlayReady) {
-      logger.warn({ asin }, 'Product overlay did not open');
-      await takeErrorScreenshot(page, `overlay_not_open_${asin}`);
-      return { rating: undefined, reviewCount: undefined };
+  while (toProcess.length > 0 && retries <= MAX_RETRIES) {
+    if (!(await isPageAlive(activePage))) {
+      logger.warn('Page dead before enrichment batch — recovering');
+      try {
+        const recovered = await recoverForProductPages(heartbeat, activeBrowser);
+        activeBrowser = recovered.browser;
+        activePage = recovered.page;
+        retries++;
+      } catch (err) {
+        logger.error(
+          { err: (err as Error).message },
+          'Product-page recovery failed — aborting enrichment'
+        );
+        break;
+      }
     }
 
-    await takeScreenshot(page, `product_${asin}_overlay`);
+    const { data: batchResults } = await enrichProducts(activePage, toProcess);
 
-    const detail = await extractProductDetail(page);
-    logger.debug(
-      { asin, rating: detail.rating, reviewCount: detail.reviewCount },
-      'Product detail extracted'
-    );
+    for (const [asin, pageData] of batchResults) {
+      allData.set(asin, pageData);
+    }
 
-    // Brief pause after extraction before closing — let SPA breathe
-    await delay(500);
+    const processed = new Set(batchResults.keys());
+    const remaining = toProcess.filter(a => !processed.has(a));
 
-    return { rating: detail.rating, reviewCount: detail.reviewCount };
-  } finally {
-    await closeProductOverlay(page);
+    if (remaining.length === toProcess.length) {
+      logger.warn({ remaining: remaining.length }, 'No progress in enrichment batch — stopping');
+      break;
+    }
+
+    toProcess = remaining;
+    if (toProcess.length > 0) retries++;
   }
+
+  // Merge enrichment data back into products
+  for (const product of products) {
+    const data = allData.get(product.asin);
+    if (data) {
+      if (data.rating !== undefined) product.rating = data.rating;
+      if (data.reviewCount !== undefined) product.reviewCount = data.reviewCount;
+    }
+  }
+
+  logger.info(
+    { enriched: allData.size, total: asins.length, missing: asins.length - allData.size },
+    'Phase 3 review enrichment complete'
+  );
+
+  return { activePage, activeBrowser };
 }
 
 // ─── Category iteration (shared between pass 1 and pass 2) ──────────────────
@@ -181,10 +230,10 @@ async function scrapeCategories(
 
   let activePage = page;
   let activeBrowser = browser;
-  let overlaysSinceRecovery = 0;
-  const MAX_OVERLAYS_BEFORE_RECOVERY = 10;
 
   const categoryIds = [...config.keepa.categories];
+  const MAX_CATEGORY_RETRIES = 1;
+  const categoryRetries = new Map<number, number>();
 
   for (let catIdx = 0; catIdx < categoryIds.length; catIdx++) {
     const categoryId = categoryIds[catIdx];
@@ -196,38 +245,25 @@ async function scrapeCategories(
 
     // Check page health before each category
     if (!(await isPageAlive(activePage))) {
-      logger.error('Page dead — recovering');
+      const retries = categoryRetries.get(catIdx) ?? 0;
+      if (retries >= MAX_CATEGORY_RETRIES) {
+        logger.warn({ category: categoryName, retries }, 'Max retries reached — skipping category');
+        continue;
+      }
+
+      logger.error({ category: categoryName }, 'Page dead — recovering');
       try {
         const recovered = await recoverSession(heartbeat, activeBrowser, {
           lowestEver: options.isLowest,
         });
         activeBrowser = recovered.browser;
         activePage = recovered.page;
-        overlaysSinceRecovery = 0;
-        // Retry this category
+        categoryRetries.set(catIdx, retries + 1);
         catIdx--;
         continue;
       } catch (err) {
         logger.error({ err: (err as Error).message }, 'Recovery failed — aborting');
         break;
-      }
-    }
-
-    // Proactive recovery: fresh browser to prevent memory buildup from Keepa charts
-    if (options.extractDetails && overlaysSinceRecovery >= MAX_OVERLAYS_BEFORE_RECOVERY) {
-      logger.info(
-        { overlaysSinceRecovery },
-        'Proactive recovery — refreshing browser to prevent memory pressure'
-      );
-      try {
-        const recovered = await recoverSession(heartbeat, activeBrowser, {
-          lowestEver: options.isLowest,
-        });
-        activeBrowser = recovered.browser;
-        activePage = recovered.page;
-        overlaysSinceRecovery = 0;
-      } catch (err) {
-        logger.error({ err: (err as Error).message }, 'Proactive recovery failed — continuing');
       }
     }
 
@@ -249,13 +285,45 @@ async function scrapeCategories(
       if (!switched) {
         logger.warn({ category: categoryName }, 'Timeout waiting for category switch');
         await takeErrorScreenshot(activePage, `${passLabel}_cat_${categoryId}_timeout`);
+
+        // Timeout may indicate a dead page — check and recover if needed
+        if (!(await isPageAlive(activePage))) {
+          const retries = categoryRetries.get(catIdx) ?? 0;
+          if (retries < MAX_CATEGORY_RETRIES) {
+            logger.error(
+              { category: categoryName },
+              'Page died during category switch — recovering'
+            );
+            try {
+              const recovered = await recoverSession(heartbeat, activeBrowser, {
+                lowestEver: options.isLowest,
+              });
+              activeBrowser = recovered.browser;
+              activePage = recovered.page;
+              categoryRetries.set(catIdx, retries + 1);
+              catIdx--; // Retry this category
+              continue;
+            } catch (recErr) {
+              logger.error(
+                { err: (recErr as Error).message },
+                'Recovery after timeout failed — aborting'
+              );
+              break;
+            }
+          } else {
+            logger.warn(
+              { category: categoryName, retries },
+              'Page dead after timeout but max retries reached — skipping'
+            );
+          }
+        }
         continue;
       }
 
       await takeScreenshot(activePage, `${passLabel}_cat_${categoryId}_loaded`);
 
       if (options.extractDetails) {
-        // Full scrape: extract product links, then click each for review data
+        // Phase 1: collect product data from deals page (reviews enriched in Phase 3)
         const productLinks = await extractProductLinks(activePage);
         const targetCount = config.keepa.maxProductsPerCategory;
 
@@ -266,20 +334,9 @@ async function scrapeCategories(
 
         const categoryProducts: KeepaProduct[] = [];
         let skippedUnchanged = 0;
-        let consecutiveFailures = 0;
-        const MAX_CONSECUTIVE_FAILURES = 3;
 
         for (let i = 0; i < productLinks.length && categoryProducts.length < targetCount; i++) {
-          const { asin, containerIndex, discount, avgPrice, currentPrice } = productLinks[i];
-
-          // If too many consecutive failures, the page is likely unresponsive — break and recover
-          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-            logger.warn(
-              { consecutiveFailures, category: categoryName },
-              'Too many consecutive failures — breaking product loop'
-            );
-            break;
-          }
+          const { asin, discount, avgPrice, currentPrice } = productLinks[i];
 
           try {
             const dupCheck = await checkDealDuplicate(asin, {
@@ -294,41 +351,20 @@ async function scrapeCategories(
               continue;
             }
 
-            // Extract review data via overlay click
-            const reviewData = await scrapeProductDetail(activePage, containerIndex, asin);
-            overlaysSinceRecovery++;
-
             categoryProducts.push({
               asin,
               category: categoryName,
               discount,
               avgPrice,
               currentPrice,
-              rating: reviewData.rating,
-              reviewCount: reviewData.reviewCount,
+              rating: undefined,
+              reviewCount: undefined,
               isLowest: options.isLowest,
             });
 
-            logger.info(
-              {
-                asin,
-                currentPrice,
-                avgPrice,
-                discount,
-                rating: reviewData.rating,
-                reviewCount: reviewData.reviewCount,
-              },
-              'Product scraped'
-            );
-
-            consecutiveFailures = 0;
+            logger.info({ asin, currentPrice, avgPrice, discount }, 'Product collected');
           } catch (error) {
-            consecutiveFailures++;
-            await takeErrorScreenshot(activePage, `product_error_${asin}`);
-            logger.warn(
-              { asin, err: (error as Error).message, consecutiveFailures },
-              'Error processing product'
-            );
+            logger.warn({ asin, err: (error as Error).message }, 'Error checking product');
           }
         }
 
@@ -349,17 +385,6 @@ async function scrapeCategories(
             allAsins.add(product.asin);
           }
         }
-
-        // If we broke out due to failures, recover before next category
-        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-          logger.info('Triggering recovery after consecutive failures');
-          const recovered = await recoverSession(heartbeat, activeBrowser, {
-            lowestEver: options.isLowest,
-          });
-          activeBrowser = recovered.browser;
-          activePage = recovered.page;
-          overlaysSinceRecovery = 0;
-        }
       } else {
         // ASINs-only pass: just collect visible ASINs
         const asins = await extractAsinsOnly(activePage);
@@ -376,17 +401,26 @@ async function scrapeCategories(
 
       // Check if page died and trigger recovery
       if (!(await isPageAlive(activePage))) {
-        try {
-          const recovered = await recoverSession(heartbeat, activeBrowser, {
-            lowestEver: options.isLowest,
-          });
-          activeBrowser = recovered.browser;
-          activePage = recovered.page;
-          catIdx--; // Retry this category
-          logger.info({ category: categoryName }, 'Will retry after recovery');
-        } catch (recErr) {
-          logger.error({ err: (recErr as Error).message }, 'Recovery failed — aborting');
-          break;
+        const retries = categoryRetries.get(catIdx) ?? 0;
+        if (retries < MAX_CATEGORY_RETRIES) {
+          try {
+            const recovered = await recoverSession(heartbeat, activeBrowser, {
+              lowestEver: options.isLowest,
+            });
+            activeBrowser = recovered.browser;
+            activePage = recovered.page;
+            categoryRetries.set(catIdx, retries + 1);
+            catIdx--; // Retry this category
+            logger.info({ category: categoryName }, 'Will retry after recovery');
+          } catch (recErr) {
+            logger.error({ err: (recErr as Error).message }, 'Recovery failed — aborting');
+            break;
+          }
+        } else {
+          logger.warn(
+            { category: categoryName, retries },
+            'Page dead but max retries reached — skipping category'
+          );
         }
       }
     }
@@ -499,6 +533,23 @@ export async function scrapeKeepaDeals(): Promise<ScrapeResult> {
       },
       'Both passes complete — merged results'
     );
+
+    // ── Phase 3: Enrich products with review data via product pages ──────
+    if (allProducts.length > 0 && (await isPageAlive(page))) {
+      logger.info({ count: allProducts.length }, 'Phase 3: enriching products with review data');
+      try {
+        const enrichResult = await enrichWithReviews(page, browser, heartbeat, allProducts);
+        browser = enrichResult.activeBrowser;
+        page = enrichResult.activePage;
+      } catch (error) {
+        logger.warn(
+          { err: (error as Error).message },
+          'Phase 3 enrichment failed — products saved without review data'
+        );
+      }
+    } else if (allProducts.length > 0) {
+      logger.warn('Page not alive after Pass 2 — skipping Phase 3 enrichment');
+    }
 
     heartbeat.stop();
     await closeBrowser(browser);

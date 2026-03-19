@@ -221,3 +221,50 @@ export async function getScrapeRunById(id: string) {
 export async function getActiveRun() {
   return prisma.scrapeRun.findFirst({ where: { status: 'RUNNING' } });
 }
+
+// ─── Review enrichment helpers ───────────────────────────────────────────────
+
+export async function getDealsNeedingReviews() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  return prisma.deal.findMany({
+    where: {
+      fetchedAt: { gte: today },
+      OR: [{ rating: null }, { reviewCount: null }],
+    },
+    select: { id: true, asin: true },
+    distinct: ['asin'],
+  });
+}
+
+export async function updateDealReviewData(
+  asin: string,
+  data: { rating?: number; reviewCount?: number; currentPrice?: number }
+) {
+  const deal = await prisma.deal.findFirst({
+    where: { asin },
+    orderBy: { fetchedAt: 'desc' },
+  });
+  if (!deal) return;
+
+  await prisma.deal.update({
+    where: { id: deal.id },
+    data: {
+      ...(data.rating !== undefined && { rating: data.rating }),
+      ...(data.reviewCount !== undefined && { reviewCount: data.reviewCount }),
+      ...(data.currentPrice !== undefined && { currentPrice: data.currentPrice }),
+    },
+  });
+
+  logger.debug({ asin, dealId: deal.id, ...data }, 'Deal review data updated');
+}
+
+export async function updateDealPrice(dealId: string, currentPrice: number) {
+  await prisma.deal.update({
+    where: { id: dealId },
+    data: { currentPrice },
+  });
+
+  logger.debug({ dealId, currentPrice }, 'Deal price updated');
+}

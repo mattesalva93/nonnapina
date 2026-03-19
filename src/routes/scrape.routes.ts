@@ -14,6 +14,10 @@ import {
   saveProducts,
   startScrapeRun,
 } from '../services/product.service.js';
+import {
+  isEnrichmentInProgress,
+  runReviewEnrichment,
+} from '../services/review-enrichment.service.js';
 import type { EnrichedProduct } from '../types/index.js';
 import { createComponentLogger } from '../utils/logger.js';
 
@@ -69,6 +73,11 @@ scrapeRouter.post('/', async (_req, res, next) => {
         error: 'A scrape job is already running',
         scrapeRunId: activeRun.id,
       });
+      return;
+    }
+
+    if (isEnrichmentInProgress()) {
+      res.status(409).json({ error: 'Review enrichment is currently running' });
       return;
     }
 
@@ -229,3 +238,45 @@ export async function runScrapeJob(scrapeRunId: string): Promise<void> {
     throw err;
   }
 }
+
+/**
+ * POST /api/scrape/enrich
+ * Triggers review + price enrichment for today's deals missing review data.
+ * Uses Keepa product page navigation to extract rating, reviewCount, and current price.
+ */
+scrapeRouter.post('/enrich', async (_req, res, next) => {
+  try {
+    const activeRun = await getActiveRun();
+    if (activeRun) {
+      res.status(409).json({
+        error: 'A scrape job is running — enrichment deferred',
+        scrapeRunId: activeRun.id,
+      });
+      return;
+    }
+
+    if (isEnrichmentInProgress()) {
+      res.status(409).json({ error: 'Enrichment is already running' });
+      return;
+    }
+
+    // Fire-and-forget: run enrichment in background
+    const enrichmentPromise = runReviewEnrichment();
+    enrichmentPromise.catch(err => {
+      logger.error({ err: (err as Error).message }, 'Background enrichment failed');
+      void sendErrorAlert({
+        errorMessage: `Review enrichment failed: ${(err as Error).message}`,
+        errorStack: (err as Error).stack,
+        component: 'ReviewEnrichment',
+        severity: 'error',
+      });
+    });
+
+    res.status(202).json({
+      status: 'RUNNING',
+      message: 'Review enrichment started in background.',
+    });
+  } catch (err) {
+    next(err);
+  }
+});

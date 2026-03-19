@@ -6,6 +6,7 @@ import { sendErrorAlert, sendScheduleEmail } from './email.service.js';
 import { runLowestDealCycle } from './lowest-deal.service.js';
 import { getActiveRun } from './product.service.js';
 import { runPublishCycle } from './publish.service.js';
+import { isEnrichmentInProgress, runReviewEnrichment } from './review-enrichment.service.js';
 import { runTop5PublishCycle } from './top5.service.js';
 
 const logger = createComponentLogger('Scheduler');
@@ -207,6 +208,40 @@ export function initPublishScheduler(): void {
             errorMessage: `Scheduled top 5 publish failed: ${message}`,
             errorStack: (err as Error).stack,
             component: 'ScheduledTop5Publish',
+            severity: 'error',
+          });
+        }
+      })();
+    })
+  );
+
+  // Review enrichment every 3 hours during publish window (6–23)
+  cronTasks.push(
+    cron.schedule('0 6,9,12,15,18,21 * * *', () => {
+      logger.info('Scheduled review enrichment triggered');
+      void (async () => {
+        try {
+          if (isEnrichmentInProgress()) {
+            logger.info('Enrichment already running — skipping');
+            return;
+          }
+
+          const result = await runReviewEnrichment();
+          if (result.skippedReason) {
+            logger.info({ reason: result.skippedReason }, 'Scheduled enrichment skipped');
+          } else {
+            logger.info(
+              { enriched: result.enriched, total: result.total },
+              'Scheduled enrichment complete'
+            );
+          }
+        } catch (err) {
+          const message = (err as Error).message;
+          logger.error({ err: message }, 'Scheduled review enrichment failed');
+          void sendErrorAlert({
+            errorMessage: `Scheduled review enrichment failed: ${message}`,
+            errorStack: (err as Error).stack,
+            component: 'ScheduledEnrichment',
             severity: 'error',
           });
         }

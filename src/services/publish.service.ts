@@ -1,5 +1,7 @@
+import { config } from '../config/index.js';
 import { formatPrice } from '../utils/format.js';
 import { createComponentLogger } from '../utils/logger.js';
+import { amazonService } from './amazon.js';
 import {
   areAllChannelsReady,
   dispatchToChannels,
@@ -8,7 +10,7 @@ import {
   recordPublications,
 } from './channels/channel.registry.js';
 import type { ChannelResult } from './channels/channel.types.js';
-import { prisma } from './product.service.js';
+import { prisma, updateDealPrice } from './product.service.js';
 import { computeDealScore } from './scoring.js';
 
 export type { ChannelName } from './channels/channel.types.js';
@@ -20,7 +22,7 @@ const logger = createComponentLogger('PublishService');
 
 const TOP_POOL_SIZE = 5;
 
-export async function selectNextDeal() {
+export async function selectNextDeal(excludeAsins: Set<string> = new Set()) {
   const candidates = await prisma.deal.findMany({
     where: {
       published: false,
@@ -29,6 +31,7 @@ export async function selectNextDeal() {
       discount: { not: null, gt: 0 },
       price: { not: null },
       affiliateWeb: { not: null },
+      ...(excludeAsins.size > 0 && { asin: { notIn: [...excludeAsins] } }),
     },
     include: { product: true },
     orderBy: { fetchedAt: 'desc' },
@@ -98,6 +101,21 @@ export function buildPostContent(deal: {
   return lines.join('\n');
 }
 
+// ─── Price guard via Amazon API ───────────────────────────────────────────────
+
+const MAX_PRICE_CHECK_ATTEMPTS = 5;
+
+async function verifyDealPrice(asin: string): Promise<number | undefined> {
+  try {
+    const linkOptions = { storefront: config.amazon.storefrontId };
+    const products = await amazonService.getProductDetails([asin], linkOptions);
+    return products[0]?.price;
+  } catch (err) {
+    logger.warn({ asin, err: (err as Error).message }, 'Amazon API price check failed');
+    return undefined;
+  }
+}
+
 // ─── Orchestration ────────────────────────────────────────────────────────────
 
 export interface PublishResult {
@@ -116,14 +134,56 @@ export async function runPublishCycle(): Promise<PublishResult | undefined> {
     return undefined;
   }
 
-  const deal = await selectNextDeal();
-  if (!deal) {
-    logger.info('No unpublished deals available — skipping publish cycle');
+  const excludeAsins = new Set<string>();
+  let selectedDeal: Awaited<ReturnType<typeof selectNextDeal>> | undefined;
+  let verifiedPrice: number | undefined;
+
+  // Price guard loop: select deal, verify price, skip if increased
+  for (let attempt = 0; attempt < MAX_PRICE_CHECK_ATTEMPTS; attempt++) {
+    const deal = await selectNextDeal(excludeAsins);
+    if (!deal) {
+      logger.info('No unpublished deals available — skipping publish cycle');
+      return undefined;
+    }
+
+    const newPrice = await verifyDealPrice(deal.asin);
+
+    if (newPrice === undefined) {
+      // API call failed — publish with existing data
+      logger.info({ asin: deal.asin }, 'Price check unavailable — publishing with existing data');
+      selectedDeal = deal;
+      break;
+    }
+
+    const oldPrice = deal.currentPrice ?? deal.price;
+    if (oldPrice !== undefined && oldPrice !== null && newPrice > oldPrice) {
+      // Price increased — update DB and skip deal
+      logger.warn(
+        { asin: deal.asin, oldPrice, newPrice, attempt },
+        'Deal price increased — skipping'
+      );
+      await updateDealPrice(deal.id, newPrice);
+      excludeAsins.add(deal.asin);
+      continue;
+    }
+
+    // Price OK (same or decreased) — update DB if changed and proceed
+    if (newPrice !== oldPrice) {
+      await updateDealPrice(deal.id, newPrice);
+      deal.currentPrice = newPrice;
+    }
+    verifiedPrice = newPrice;
+    selectedDeal = deal;
+    break;
+  }
+
+  if (!selectedDeal) {
+    logger.warn('All candidate deals failed price check — skipping publish cycle');
     return undefined;
   }
 
-  const postContent = buildPostContent(deal);
-  const imageUrl = deal.product.imageLarge ?? deal.product.imageSmall ?? undefined;
+  const postContent = buildPostContent(selectedDeal);
+  const imageUrl = selectedDeal.product.imageLarge ?? selectedDeal.product.imageSmall ?? undefined;
 
   const activeChannels = getActiveChannels();
   if (activeChannels.length === 0) {
@@ -133,12 +193,17 @@ export async function runPublishCycle(): Promise<PublishResult | undefined> {
 
   const results = await dispatchToChannels(activeChannels, { postContent, imageUrl });
 
-  await recordPublications(deal.id, postContent, results);
-  const { allSucceeded } = await markDealPublished(deal.id, deal.asin, results, 'PublishService');
+  await recordPublications(selectedDeal.id, postContent, results);
+  const { allSucceeded } = await markDealPublished(
+    selectedDeal.id,
+    selectedDeal.asin,
+    results,
+    'PublishService'
+  );
 
   return {
-    dealId: deal.id,
-    asin: deal.asin,
+    dealId: selectedDeal.id,
+    asin: selectedDeal.asin,
     postContent,
     channels: results,
     allSucceeded,

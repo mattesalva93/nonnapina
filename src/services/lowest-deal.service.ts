@@ -1,5 +1,7 @@
+import { config } from '../config/index.js';
 import { formatPrice } from '../utils/format.js';
 import { createComponentLogger } from '../utils/logger.js';
+import { amazonService } from './amazon.js';
 import {
   areAllChannelsReady,
   dispatchToChannels,
@@ -7,7 +9,7 @@ import {
   markDealPublished,
   recordPublications,
 } from './channels/channel.registry.js';
-import { prisma } from './product.service.js';
+import { prisma, updateDealPrice } from './product.service.js';
 import type { PublishResult } from './publish.service.js';
 import { computeDealScore } from './scoring.js';
 
@@ -40,7 +42,7 @@ function shortenTitle(title: string, maxLength = 50): string {
 
 const TOP_POOL_SIZE = 5;
 
-export async function selectNextLowestDeal() {
+export async function selectNextLowestDeal(excludeAsins: Set<string> = new Set()) {
   const candidates = await prisma.deal.findMany({
     where: {
       published: false,
@@ -50,6 +52,7 @@ export async function selectNextLowestDeal() {
       discount: { not: null, gt: 0 },
       price: { not: null },
       affiliateWeb: { not: null },
+      ...(excludeAsins.size > 0 && { asin: { notIn: [...excludeAsins] } }),
     },
     include: { product: true },
     orderBy: { fetchedAt: 'desc' },
@@ -124,6 +127,21 @@ export function buildLowestPostContent(deal: {
   return lines.join('\n');
 }
 
+// ─── Price guard via Amazon API ───────────────────────────────────────────────
+
+const MAX_PRICE_CHECK_ATTEMPTS = 5;
+
+async function verifyDealPrice(asin: string): Promise<number | undefined> {
+  try {
+    const linkOptions = { storefront: config.amazon.storefrontId };
+    const products = await amazonService.getProductDetails([asin], linkOptions);
+    return products[0]?.price;
+  } catch (err) {
+    logger.warn({ asin, err: (err as Error).message }, 'Amazon API price check failed');
+    return undefined;
+  }
+}
+
 // ─── Orchestration ────────────────────────────────────────────────────────────
 
 export async function runLowestDealCycle(): Promise<PublishResult | undefined> {
@@ -133,14 +151,50 @@ export async function runLowestDealCycle(): Promise<PublishResult | undefined> {
     return undefined;
   }
 
-  const deal = await selectNextLowestDeal();
-  if (!deal) {
-    logger.info('No unpublished lowest-price deals available — falling back to regular cycle');
+  const excludeAsins = new Set<string>();
+  let selectedDeal: Awaited<ReturnType<typeof selectNextLowestDeal>> | undefined;
+
+  // Price guard loop: select deal, verify price, skip if increased
+  for (let attempt = 0; attempt < MAX_PRICE_CHECK_ATTEMPTS; attempt++) {
+    const deal = await selectNextLowestDeal(excludeAsins);
+    if (!deal) {
+      logger.info('No unpublished lowest-price deals available — falling back to regular cycle');
+      return undefined;
+    }
+
+    const newPrice = await verifyDealPrice(deal.asin);
+
+    if (newPrice === undefined) {
+      selectedDeal = deal;
+      break;
+    }
+
+    const oldPrice = deal.currentPrice ?? deal.price;
+    if (oldPrice !== undefined && oldPrice !== null && newPrice > oldPrice) {
+      logger.warn(
+        { asin: deal.asin, oldPrice, newPrice, attempt },
+        'Lowest deal price increased — skipping'
+      );
+      await updateDealPrice(deal.id, newPrice);
+      excludeAsins.add(deal.asin);
+      continue;
+    }
+
+    if (newPrice !== oldPrice) {
+      await updateDealPrice(deal.id, newPrice);
+      deal.currentPrice = newPrice;
+    }
+    selectedDeal = deal;
+    break;
+  }
+
+  if (!selectedDeal) {
+    logger.warn('All lowest-deal candidates failed price check — falling back to regular cycle');
     return undefined;
   }
 
-  const postContent = buildLowestPostContent(deal);
-  const imageUrl = deal.product.imageLarge ?? deal.product.imageSmall ?? undefined;
+  const postContent = buildLowestPostContent(selectedDeal);
+  const imageUrl = selectedDeal.product.imageLarge ?? selectedDeal.product.imageSmall ?? undefined;
 
   const activeChannels = getActiveChannels();
   if (activeChannels.length === 0) {
@@ -150,17 +204,17 @@ export async function runLowestDealCycle(): Promise<PublishResult | undefined> {
 
   const results = await dispatchToChannels(activeChannels, { postContent, imageUrl });
 
-  await recordPublications(deal.id, postContent, results);
+  await recordPublications(selectedDeal.id, postContent, results);
   const { allSucceeded } = await markDealPublished(
-    deal.id,
-    deal.asin,
+    selectedDeal.id,
+    selectedDeal.asin,
     results,
     'LowestDealService'
   );
 
   return {
-    dealId: deal.id,
-    asin: deal.asin,
+    dealId: selectedDeal.id,
+    asin: selectedDeal.asin,
     postContent,
     channels: results,
     allSucceeded,

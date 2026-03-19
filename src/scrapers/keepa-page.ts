@@ -608,7 +608,6 @@ export async function waitForCategorySwitch(
 export interface RawProductData {
   asin: string;
   href: string;
-  containerIndex: number;
   discount: number | undefined;
   avgPrice: number | undefined;
   currentPrice: number | undefined;
@@ -625,7 +624,6 @@ export async function extractProductLinks(
       ): {
         asin: string;
         href: string;
-        containerIndex: number;
         discount: number | null;
         avgPrice: number | null;
         currentPrice: number | null;
@@ -633,7 +631,6 @@ export async function extractProductLinks(
         const links: {
           asin: string;
           href: string;
-          containerIndex: number;
           discount: number | null;
           avgPrice: number | null;
           currentPrice: number | null;
@@ -695,7 +692,7 @@ export async function extractProductLinks(
             if (m) currentPrice = parseFloat(m[1].replace(',', '.'));
           }
 
-          links.push({ asin, href, containerIndex: idx, discount, avgPrice, currentPrice });
+          links.push({ asin, href, discount, avgPrice, currentPrice });
           idx++;
         }
         return links;
@@ -707,27 +704,17 @@ export async function extractProductLinks(
   return raw.map(l => ({
     asin: l.asin,
     href: l.href,
-    containerIndex: l.containerIndex,
     discount: l.discount ?? undefined,
     avgPrice: l.avgPrice ?? undefined,
     currentPrice: l.currentPrice ?? undefined,
   }));
 }
 
-// ─── Product detail extraction (overlay click) ────────────────────────────────
-// Uses the product overlay (#productOverlay / #detailProductPage) that opens
-// when clicking a product in the list. No new tab needed.
+// ─── Flot.js chart blocker ────────────────────────────────────────────────────
+// Prevents heavy canvas rendering (~2.5 MB each) and window-level event handler
+// accumulation when navigating between product pages.
 
-export interface ProductReviewData {
-  rating: number | undefined;
-  reviewCount: number | undefined;
-  imageUrl: string | undefined;
-}
-
-// Prevent Flot.js chart rendering inside product overlays.
-// Each overlay creates heavy canvases (~2.5 MB) and window-level event handlers
-// that persist after close, overwhelming the browser after ~15 opens.
-async function ensureChartBlocker(page: Page): Promise<void> {
+export async function ensureChartBlocker(page: Page): Promise<void> {
   await page
     .evaluate(() => {
       if (document.getElementById('npina-chart-blocker')) return;
@@ -780,188 +767,6 @@ async function ensureChartBlocker(page: Page): Promise<void> {
       }
     })
     .catch(() => {});
-}
-
-export async function clickProductOverlay(page: Page, containerIndex: number): Promise<boolean> {
-  await ensureChartBlocker(page);
-  const selector = `#p${containerIndex} > a[href*="#!product/"]`;
-  const element = await page.$(selector);
-  if (!element) return false;
-  await element.click();
-  // Give the SPA time to start rendering the overlay (charts are blocked)
-  await delay(1500);
-  return true;
-}
-
-export async function waitForProductOverlay(page: Page, maxWaitMs = 15_000): Promise<boolean> {
-  const start = Date.now();
-
-  while (Date.now() - start < maxWaitMs) {
-    const ready = await page
-      .evaluate(() => {
-        const overlay = document.getElementById('productOverlay');
-        if (!overlay) return false;
-        // Keepa keeps class="hidden" even when visible — check computed style instead
-        const style = window.getComputedStyle(overlay);
-        const isVisible = style.display !== 'none' && style.visibility !== 'hidden';
-        const infoBox = document.getElementById('productInfoBox');
-        return isVisible && !!infoBox && (infoBox.textContent?.trim().length ?? 0) > 10;
-      })
-      .catch(() => false);
-
-    if (ready) return true;
-    await delay(500);
-  }
-
-  return false;
-}
-
-export async function extractProductDetail(page: Page): Promise<ProductReviewData> {
-  return page
-    .evaluate(
-      (): { rating: number | null; reviewCount: number | null; imageUrl: string | null } => {
-        const data: { rating: number | null; reviewCount: number | null; imageUrl: string | null } =
-          {
-            rating: null,
-            reviewCount: null,
-            imageUrl: null,
-          };
-
-        // Extract rating and review count from #productInfoBox
-        // HTML pattern: <span>3.6</span> (2 recensioni)
-        const infoBox = document.getElementById('productInfoBox');
-        if (infoBox) {
-          const firstDiv = infoBox.querySelector('div');
-          if (firstDiv) {
-            const fullText = firstDiv.textContent?.trim() ?? '';
-
-            // Rating: "3.6" near star icons or as standalone decimal ≤ 5
-            let ratingMatch = fullText.match(/(\d+[.,]\d+)\s*(?:su\s*\d+\s*)?(stelle|stars?)/i);
-            if (!ratingMatch) {
-              // Fallback: look for the color-coded rating span
-              const ratingSpan = firstDiv.querySelector(
-                'span[style*="color:#cea000"], span[style*="color: #cea000"]'
-              );
-              if (ratingSpan) {
-                const parsed = parseFloat(ratingSpan.textContent?.trim()?.replace(',', '.') ?? '');
-                if (!isNaN(parsed) && parsed >= 0 && parsed <= 5) {
-                  data.rating = parsed;
-                }
-              }
-              if (data.rating === null) {
-                ratingMatch = fullText.match(/(\d+[.,]\d+)(?!\s*(?:cm|mm|kg|x|×|€))/);
-              }
-            }
-            if (ratingMatch && data.rating === null) {
-              const parsed = parseFloat(ratingMatch[1].replace(',', '.'));
-              if (parsed >= 0 && parsed <= 5) data.rating = parsed;
-            }
-
-            // Review count: "(2 recensioni)" or "(123 valutazioni)"
-            const reviewPatterns = [
-              /\((\d[\d.,]*)\s*(?:recensioni|valutazioni|reviews?|ratings?|Bewertungen)/i,
-              /(?:stelle|stars?)\s*\((\d[\d.,]*)\)/i,
-            ];
-            for (const pattern of reviewPatterns) {
-              const m = fullText.match(pattern);
-              if (m) {
-                const raw = (m[1] ?? '').replace(/[.,]/g, '');
-                const parsed = parseInt(raw, 10);
-                if (!isNaN(parsed) && parsed > 0) {
-                  data.reviewCount = parsed;
-                  break;
-                }
-              }
-            }
-          }
-        }
-
-        // Extract image URL from first thumbnail or main image
-        const thumbs = document.getElementById('productTableImageBoxThumbs');
-        if (thumbs) {
-          const firstThumb = thumbs.querySelector('.productThumb');
-          if (firstThumb) {
-            const bg = (firstThumb as HTMLElement).style.backgroundImage ?? '';
-            const urlMatch = bg.match(/url\(['"]?(.*?)['"]?\)/);
-            if (urlMatch?.[1]) {
-              // Convert thumbnail URL to large image URL
-              data.imageUrl = urlMatch[1].replace(/_SL75_/, '_SL500_');
-            }
-          }
-        }
-
-        return data;
-      }
-    )
-    .then(d => ({
-      rating: d.rating ?? undefined,
-      reviewCount: d.reviewCount ?? undefined,
-      imageUrl: d.imageUrl ?? undefined,
-    }))
-    .catch(() => ({ rating: undefined, reviewCount: undefined, imageUrl: undefined }));
-}
-
-export async function closeProductOverlay(page: Page): Promise<void> {
-  try {
-    const closeBtn = await page.$('#productOverlay-close');
-    if (closeBtn) {
-      await closeBtn.click();
-    } else {
-      const shadow = await page.$('#overlayShadow');
-      if (shadow) await shadow.click();
-    }
-  } catch {
-    /* overlay already closed or not found */
-  }
-
-  await delay(300);
-
-  // Destroy Flot chart objects and clean up accumulated DOM.
-  // Even with $.plot neutered, Keepa's SPA may create residual elements.
-  // The cleanup also handles the first overlay (before the blocker is injected).
-  await Promise.race([
-    page
-      .evaluate(() => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const jq = (window as any).jQuery || (window as any).$;
-
-        for (const id of ['graph', 'salesRankGraph', 'moreDataGraph']) {
-          const el = document.getElementById(id);
-          if (!el) continue;
-
-          // Shutdown Flot plot: removes window.resize + mouse event handlers
-          if (jq) {
-            try {
-              const plot = jq(el).data('plot');
-              if (plot && typeof plot.shutdown === 'function') plot.shutdown();
-              jq(el).removeData();
-              jq(el).off();
-            } catch {
-              /* ignore */
-            }
-          }
-
-          // Remove accumulated canvases, legends, tooltips, tick labels
-          el.querySelectorAll('canvas, .legend, .flotToolTipsPlaceholder, .tickLabels').forEach(n =>
-            n.remove()
-          );
-        }
-
-        // Free product image memory
-        const imgBox = document.getElementById('productTableImageBoxMain');
-        if (imgBox) {
-          imgBox.querySelectorAll('img').forEach(img => {
-            img.removeAttribute('src');
-            img.remove();
-          });
-        }
-      })
-      .catch(() => {}),
-    // Safety: don't wait forever if the page is already struggling
-    new Promise<void>(resolve => setTimeout(resolve, 5000)),
-  ]);
-
-  await delay(700);
 }
 
 // ─── ASINs-only extraction (for lowest pass) ─────────────────────────────────

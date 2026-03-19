@@ -42,6 +42,7 @@ desktop.ini
 # ─── Mockup ──────────────────────────────────────────────────
 keepa_mockup_opened_product.html
 keepa_mockup_product_list.html
+keepa_mockup_single_asin.html
 
 # ─── Misc ────────────────────────────────────────────────────────
 *.tgz
