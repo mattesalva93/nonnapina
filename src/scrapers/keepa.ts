@@ -460,39 +460,6 @@ async function recoverDealsPage(
   await delay(2000);
   logger.debug('Recovery: Amazon.it domain selected');
 
-  // Select Italian language (critical — without this, categories are in English)
-  try {
-    const italianSelected = await newPage.evaluate(() => {
-      const italianFlag = document.querySelector('img[rel="language"][setting="8"]');
-      if (italianFlag) {
-        (italianFlag as HTMLElement).click();
-        return true;
-      }
-      return false;
-    });
-    if (italianSelected) {
-      logger.info('Recovery: Italian language selected');
-      await delay(4000);
-    } else {
-      const altSelected = await newPage.evaluate(() => {
-        const langIt = document.getElementById('lang_it');
-        if (langIt) {
-          langIt.click();
-          return true;
-        }
-        return false;
-      });
-      if (altSelected) {
-        logger.info('Recovery: Italian language selected (alternative method)');
-        await delay(4000);
-      } else {
-        logger.warn('Recovery: Italian language option not found');
-      }
-    }
-  } catch (err) {
-    logger.warn({ err: (err as Error).message }, 'Recovery: error selecting Italian language');
-  }
-
   // Navigate to deals page
   await newPage.goto('https://keepa.com/#!deals', { waitUntil: 'networkidle2', timeout: 60000 });
 
@@ -514,6 +481,55 @@ async function recoverDealsPage(
 
   // Wait for the deals UI (handles Cloudflare transparently)
   await waitForDealsUI(newPage, 'recovery');
+
+  // Select Italian language AFTER deals page is loaded (Keepa is a SPA —
+  // language set on the homepage does NOT persist to the deals view).
+  try {
+    const italianSelected = await newPage.evaluate(() => {
+      const italianFlag = document.querySelector('img[rel="language"][setting="8"]');
+      if (italianFlag) {
+        (italianFlag as HTMLElement).click();
+        return true;
+      }
+      return false;
+    });
+    if (italianSelected) {
+      logger.info('Recovery: Italian language selected');
+      await delay(4000);
+      // After language change Keepa reloads the SPA — wait for UI again
+      await waitForDealsUI(newPage, 'recovery-post-lang');
+    } else {
+      const altSelected = await newPage.evaluate(() => {
+        const langIt = document.getElementById('lang_it');
+        if (langIt) {
+          langIt.click();
+          return true;
+        }
+        return false;
+      });
+      if (altSelected) {
+        logger.info('Recovery: Italian language selected (alternative method)');
+        await delay(4000);
+        await waitForDealsUI(newPage, 'recovery-post-lang');
+      } else {
+        logger.warn('Recovery: Italian language option not found');
+      }
+    }
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, 'Recovery: error selecting Italian language');
+  }
+
+  // Verify language took effect by sampling a category link
+  const langCheck = await newPage.evaluate(() => {
+    const fc = document.getElementById('filterCats');
+    if (!fc) return { filterCatsExists: false, sample: '' };
+    const firstLink = fc.querySelector('a[rel]');
+    return {
+      filterCatsExists: true,
+      sample: firstLink?.textContent?.trim() ?? '',
+    };
+  });
+  logger.info({ ...langCheck }, 'Recovery: language verification (expect Italian category names)');
 
   // Price type filter: Amazon
   await newPage.evaluate(() => {
