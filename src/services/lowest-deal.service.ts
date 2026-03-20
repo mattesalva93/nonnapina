@@ -43,6 +43,10 @@ function shortenTitle(title: string, maxLength = 50): string {
 const TOP_POOL_SIZE = 5;
 
 export async function selectNextLowestDeal(excludeAsins: Set<string> = new Set()) {
+  const now = new Date();
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
+
   const candidates = await prisma.deal.findMany({
     where: {
       published: false,
@@ -52,6 +56,7 @@ export async function selectNextLowestDeal(excludeAsins: Set<string> = new Set()
       discount: { not: null, gt: 0 },
       price: { not: null },
       affiliateWeb: { not: null },
+      fetchedAt: { gte: startOfDay, lt: endOfDay },
       ...(excludeAsins.size > 0 && { asin: { notIn: [...excludeAsins] } }),
     },
     include: { product: true },
