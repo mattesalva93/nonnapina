@@ -146,7 +146,6 @@ jobs:
             KEEPA_CATEGORIES=${{ secrets.KEEPA_CATEGORIES }}
             MAX_PRODUCTS_PER_CATEGORY=${{ secrets.MAX_PRODUCTS_PER_CATEGORY }}
             SCRAPING_DELAY_MS=${{ secrets.SCRAPING_DELAY_MS }}
-            SCRAPE_CRON=${{ secrets.SCRAPE_CRON }}
             ENVEOF
             chmod 600 .env
 

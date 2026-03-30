@@ -14,7 +14,11 @@ import { whatsappRouter } from './routes/whatsapp.routes.js';
 import { areAllChannelsReady } from './services/channels/channel.registry.js';
 import { sendErrorAlert } from './services/email.service.js';
 import { failScrapeRun, getActiveRun, prisma, startScrapeRun } from './services/product.service.js';
-import { initPublishScheduler, stopAllCronTasks } from './services/scheduler.service.js';
+import {
+  initPublishScheduler,
+  SCRAPE_CRON,
+  stopAllCronTasks,
+} from './services/scheduler.service.js';
 import { destroyWhatsApp, getWhatsAppStatus, initWhatsApp } from './services/whatsapp.service.js';
 import { localISOString } from './utils/date.js';
 import { createComponentLogger } from './utils/logger.js';
@@ -190,8 +194,6 @@ async function postScrapeHealthCheck(scrapeRunId: string): Promise<void> {
 }
 
 // ─── Scheduled scraping ──────────────────────────────────────────────────────
-// Runs every day at 08:00 (can be overridden via SCRAPE_CRON env var)
-const { cronSchedule } = config.server;
 
 if (config.server.nodeEnv !== 'test') {
   // Initialize WhatsApp client only when a channel is configured
@@ -210,37 +212,41 @@ if (config.server.nodeEnv !== 'test') {
     logger.info('WhatsApp not configured (WHATSAPP_CHANNEL_ID unset) — skipping initialization');
   }
 
-  const scrapeCronTask = cron.schedule(cronSchedule, () => {
-    logger.info({ schedule: cronSchedule }, 'Scheduled scrape triggered');
-    void (async () => {
-      try {
-        const activeRun = await getActiveRun();
-        if (activeRun) {
-          logger.warn(
-            { scrapeRunId: activeRun.id },
-            'Scheduled scrape skipped — a job is already running'
-          );
-          return;
+  const scrapeCronTask = cron.schedule(
+    SCRAPE_CRON,
+    () => {
+      logger.info({ schedule: SCRAPE_CRON }, 'Scheduled scrape triggered');
+      void (async () => {
+        try {
+          const activeRun = await getActiveRun();
+          if (activeRun) {
+            logger.warn(
+              { scrapeRunId: activeRun.id },
+              'Scheduled scrape skipped — a job is already running'
+            );
+            return;
+          }
+          const run = await startScrapeRun();
+          logger.info({ scrapeRunId: run.id }, 'Scheduled scrape run created');
+          await runScrapeJob(run.id);
+          logger.info({ scrapeRunId: run.id }, 'Scheduled scrape run completed');
+          // Verify channels are still healthy after scraping
+          await postScrapeHealthCheck(run.id);
+        } catch (err) {
+          const message = (err as Error).message;
+          logger.error({ err: message }, 'Scheduled scrape failed');
+          void sendErrorAlert({
+            errorMessage: `Scheduled scrape failed: ${message}`,
+            errorStack: (err as Error).stack,
+            component: 'ScheduledScrape',
+            severity: 'critical',
+          });
         }
-        const run = await startScrapeRun();
-        logger.info({ scrapeRunId: run.id }, 'Scheduled scrape run created');
-        await runScrapeJob(run.id);
-        logger.info({ scrapeRunId: run.id }, 'Scheduled scrape run completed');
-        // Verify channels are still healthy after scraping
-        await postScrapeHealthCheck(run.id);
-      } catch (err) {
-        const message = (err as Error).message;
-        logger.error({ err: message }, 'Scheduled scrape failed');
-        void sendErrorAlert({
-          errorMessage: `Scheduled scrape failed: ${message}`,
-          errorStack: (err as Error).stack,
-          component: 'ScheduledScrape',
-          severity: 'critical',
-        });
-      }
-    })();
-  });
-  logger.info({ schedule: cronSchedule }, 'Scrape cron job registered');
+      })();
+    },
+    { timezone: 'Europe/Rome' }
+  );
+  logger.info({ schedule: SCRAPE_CRON }, 'Scrape cron job registered');
 
   // ─── Scheduled publishing (randomised daily slots) ──────────────────────
   initPublishScheduler();

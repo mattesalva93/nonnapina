@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { config } from '../config/index.js';
-import { generateDailySchedule, parseScrapeBlackoutMinutes } from './scheduler.service.js';
+import {
+  generateDailySchedule,
+  parseScrapeBlackoutMinutes,
+  SCRAPE_CRON,
+} from './scheduler.service.js';
 
 describe('generateDailySchedule', () => {
   it('returns a Set of "HH:MM" strings', () => {
@@ -71,7 +74,7 @@ describe('generateDailySchedule', () => {
   });
 
   it('does not generate slots inside scrape blackout windows', () => {
-    const blackoutRanges = parseScrapeBlackoutMinutes(config.server.cronSchedule);
+    const blackoutRanges = parseScrapeBlackoutMinutes(SCRAPE_CRON);
     // Skip test if no blackout windows overlap the publish window
     if (blackoutRanges.length === 0) return;
 

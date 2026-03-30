@@ -6,7 +6,6 @@ const mockConfig = vi.hoisted(() => ({
     apiSecret: 'test-secret-token-12345',
     nodeEnv: 'test',
     port: 3000,
-    cronSchedule: '15 8,20 * * *',
   },
 }));
 

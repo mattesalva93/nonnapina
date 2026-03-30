@@ -50,7 +50,6 @@ Copy `.env.example` to `.env` and fill in each section. All variables are docume
 | `LOG_LEVEL`         | No       | `debug` (dev) / `info` (prod) | Pino log level (`trace`, `debug`, `info`, `warn`, `error`)         |
 | `DATABASE_URL`      | Yes      | —                             | PostgreSQL connection string (set automatically by Docker Compose) |
 | `POSTGRES_PASSWORD` | Yes      | —                             | PostgreSQL password (used by Docker Compose)                       |
-| `SCRAPE_CRON`       | No       | `15 8,20 * * *`               | Cron schedule for automatic deal scraping                          |
 
 ### Amazon Creators API
 
@@ -306,7 +305,7 @@ Query parameters:
 
 ### Scraping
 
-The deal scraper runs on the schedule defined by `SCRAPE_CRON` (default: 08:15 and 20:15 daily). An initial scrape also runs at server startup to populate the database. If a scrape is already running, the scheduled or initial scrape is skipped.
+The deal scraper runs on a hardcoded schedule at 05:00 and 17:00 Europe/Rome daily (defined as `SCRAPE_CRON` in `scheduler.service.ts`). An initial scrape also runs at server startup to populate the database. If a scrape is already running, the scheduled or initial scrape is skipped.
 
 ### Publishing
 

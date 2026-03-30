@@ -31,7 +31,7 @@
 - [x] Express app with routes (src/server.ts)
 - [x] Routes: /api/scrape, /api/products, /api/deals, /health
 - [x] Middleware: requestLogger, errorHandler (src/middleware/)
-- [x] Scheduled scraping via node-cron (daily 08:00, override via SCRAPE_CRON)
+- [x] Scheduled scraping via node-cron (daily 05:00 and 17:00 Europe/Rome, hardcoded)
 - [x] Structured logging with pino + pino-pretty
 
 ### Phase 4 — Cleanup ✅ COMPLETE

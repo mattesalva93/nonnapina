@@ -7,7 +7,6 @@ const configSchema = z.object({
   server: z.object({
     port: z.number().int().positive().default(3000),
     nodeEnv: nodeEnvSchema,
-    cronSchedule: z.string().default('15 8,20 * * *'),
     apiSecret: z.string().default(''),
   }),
   database: z.object({
@@ -66,7 +65,6 @@ function buildRawConfig() {
     server: {
       port: parseInt(process.env.PORT ?? '3000'),
       nodeEnv: (process.env.NODE_ENV ?? 'development') as 'development' | 'production' | 'test',
-      cronSchedule: process.env.SCRAPE_CRON ?? '15 8,20 * * *',
       apiSecret: process.env.API_SECRET ?? '',
     },
     database: {
