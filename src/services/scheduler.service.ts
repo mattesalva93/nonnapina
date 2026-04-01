@@ -100,6 +100,7 @@ export function generateDailySchedule(): Set<string> {
 // ─── Scheduler bootstrap ─────────────────────────────────────────────────────
 
 const cronTasks: cron.ScheduledTask[] = [];
+let slotCheckInterval: ReturnType<typeof setInterval> | undefined;
 
 export function initPublishScheduler(): void {
   dailySchedule = generateDailySchedule();
@@ -127,85 +128,81 @@ export function initPublishScheduler(): void {
     )
   );
 
-  // Every minute, check if the current HH:MM matches a scheduled slot
-  cronTasks.push(
-    cron.schedule(
-      '* * * * *',
-      () => {
-        const now = new Date();
-        const hh = now.getHours().toString().padStart(2, '0');
-        const mm = now.getMinutes().toString().padStart(2, '0');
-        const slot = `${hh}:${mm}`;
+  // Every minute, check if the current HH:MM matches a scheduled slot.
+  // Uses setInterval instead of cron.schedule('* * * * *') to avoid a
+  // node-cron v4 bug where per-minute timers silently stop after ~34 h.
+  slotCheckInterval = setInterval(() => {
+    const now = new Date();
+    const hh = now.getHours().toString().padStart(2, '0');
+    const mm = now.getMinutes().toString().padStart(2, '0');
+    const slot = `${hh}:${mm}`;
 
-        if (dailySchedule.has(slot)) {
-          // 85% regular posts, 15% "minimo storico" posts
-          const useLowest = Math.random() < LOWEST_DEAL_PROBABILITY;
-          const variant = useLowest ? 'lowest-deal' : 'regular';
-          logger.info({ slot, variant }, 'Publish slot matched — triggering publish cycle');
+    if (dailySchedule.has(slot)) {
+      // 85% regular posts, 15% "minimo storico" posts
+      const useLowest = Math.random() < LOWEST_DEAL_PROBABILITY;
+      const variant = useLowest ? 'lowest-deal' : 'regular';
+      logger.info({ slot, variant }, 'Publish slot matched — triggering publish cycle');
 
-          void (async () => {
-            try {
-              // Defer publishing while a scrape job is running to avoid
-              // two Chromium instances competing for memory (WhatsApp + Keepa).
-              const activeRun = await getActiveRun();
-              if (activeRun) {
-                logger.warn(
-                  { slot, variant, scrapeRunId: activeRun.id },
-                  'Publish deferred — scrape job in progress'
-                );
-                return;
-              }
+      void (async () => {
+        try {
+          // Defer publishing while a scrape job is running to avoid
+          // two Chromium instances competing for memory (WhatsApp + Keepa).
+          const activeRun = await getActiveRun();
+          if (activeRun) {
+            logger.warn(
+              { slot, variant, scrapeRunId: activeRun.id },
+              'Publish deferred — scrape job in progress'
+            );
+            return;
+          }
 
-              let result;
-              if (useLowest) {
-                // Try lowest-deal first; fall back to regular if none available
-                result = await runLowestDealCycle();
-                if (!result) {
-                  logger.info({ slot }, 'No lowest-price deals — falling back to regular cycle');
-                  result = await runPublishCycle();
-                }
-              } else {
-                result = await runPublishCycle();
-              }
-
-              if (!result) {
-                logger.warn({ slot, variant }, 'Scheduled publish skipped — no deals available');
-                void sendErrorAlert({
-                  errorMessage: `Scheduled publish at slot ${slot} (${variant}) found no deals to publish`,
-                  component: 'ScheduledPublish',
-                  severity: 'warning',
-                  additionalData: { slot, variant },
-                });
-              } else if (!result.allSucceeded) {
-                const failed = result.channels
-                  .filter(ch => !ch.success)
-                  .map(ch => `${ch.channel}: ${ch.error ?? 'unknown'}`)
-                  .join('; ');
-                logger.warn({ slot, variant, failed }, 'Scheduled publish partially failed');
-                void sendErrorAlert({
-                  errorMessage: `Scheduled publish at slot ${slot} (${variant}) partially failed: ${failed}`,
-                  component: 'ScheduledPublish',
-                  severity: 'error',
-                  additionalData: { slot, variant, dealId: result.dealId, asin: result.asin },
-                });
-              }
-            } catch (err) {
-              const message = (err as Error).message;
-              logger.error({ err: message, slot, variant }, 'Scheduled publish failed');
-              void sendErrorAlert({
-                errorMessage: `Scheduled publish failed at slot ${slot} (${variant}): ${message}`,
-                errorStack: (err as Error).stack,
-                component: 'ScheduledPublish',
-                severity: 'error',
-                additionalData: { slot, variant },
-              });
+          let result;
+          if (useLowest) {
+            // Try lowest-deal first; fall back to regular if none available
+            result = await runLowestDealCycle();
+            if (!result) {
+              logger.info({ slot }, 'No lowest-price deals — falling back to regular cycle');
+              result = await runPublishCycle();
             }
-          })();
+          } else {
+            result = await runPublishCycle();
+          }
+
+          if (!result) {
+            logger.warn({ slot, variant }, 'Scheduled publish skipped — no deals available');
+            void sendErrorAlert({
+              errorMessage: `Scheduled publish at slot ${slot} (${variant}) found no deals to publish`,
+              component: 'ScheduledPublish',
+              severity: 'warning',
+              additionalData: { slot, variant },
+            });
+          } else if (!result.allSucceeded) {
+            const failed = result.channels
+              .filter(ch => !ch.success)
+              .map(ch => `${ch.channel}: ${ch.error ?? 'unknown'}`)
+              .join('; ');
+            logger.warn({ slot, variant, failed }, 'Scheduled publish partially failed');
+            void sendErrorAlert({
+              errorMessage: `Scheduled publish at slot ${slot} (${variant}) partially failed: ${failed}`,
+              component: 'ScheduledPublish',
+              severity: 'error',
+              additionalData: { slot, variant, dealId: result.dealId, asin: result.asin },
+            });
+          }
+        } catch (err) {
+          const message = (err as Error).message;
+          logger.error({ err: message, slot, variant }, 'Scheduled publish failed');
+          void sendErrorAlert({
+            errorMessage: `Scheduled publish failed at slot ${slot} (${variant}): ${message}`,
+            errorStack: (err as Error).stack,
+            component: 'ScheduledPublish',
+            severity: 'error',
+            additionalData: { slot, variant },
+          });
         }
-      },
-      { timezone: CRON_TIMEZONE }
-    )
-  );
+      })();
+    }
+  }, 60_000);
 
   // Top 5 daily summary at 19:00
   cronTasks.push(
@@ -306,5 +303,9 @@ export function stopAllCronTasks(): void {
     task.stop();
   }
   cronTasks.length = 0;
+  if (slotCheckInterval) {
+    clearInterval(slotCheckInterval);
+    slotCheckInterval = undefined;
+  }
   logger.info('All cron tasks stopped');
 }
