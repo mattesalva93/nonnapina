@@ -22,7 +22,7 @@ Deal aggregator (scrape) → Amazon Creators API (enrich) → PostgreSQL (Prisma
 
 ```bash
 # 1. Clone the repository
-git clone <repo-url> && cd nonnapina-prod
+git clone https://github.com/mattesalva93/nonnapina.git && cd nonnapina
 
 # 2. Copy the environment file and fill in your values
 cp .env.example .env
@@ -457,7 +457,7 @@ make db-shell
 - If the session expires, delete the WhatsApp session volume and re-authenticate:
   ```bash
   docker compose down
-  docker volume rm nonnapina-prod_whatsapp_session
+  docker volume rm nonnapina_whatsapp_session
   docker compose up -d
   ```
 
